@@ -39,7 +39,19 @@ jobs:
       - name: Build debug APK
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace --no-daemon
+          ok=0
+          for i in 1 2; do
+            if ./gradlew assembleDebug --stacktrace --no-daemon; then
+              ok=1
+              break
+            fi
+            echo "::warning::构建失败（第 $i 次），15 秒后重试..."
+            sleep 15
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::重试后构建仍然失败"
+            exit 1
+          fi
 
       - name: List output
         run: ls -lh app/build/outputs/apk/debug/
