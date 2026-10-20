@@ -98,14 +98,15 @@ MyVidHub/
 4. 构建完成（绿色 ✓）后，点进这次运行，页面底部 **Artifacts** 下载 `MyVidHub-debug-apk`
 5. 解压得到 `app-debug.apk` → 传到手机 / U 盘拷到电视盒子安装
 
-CI 已固定 JDK 17、Gradle 8.7、SDK Platform 34 与 Build-Tools 34.0.0，
+CI 已固定 JDK 11、Gradle 7.5、AGP 7.4.2、SDK Platform 34 与 Build-Tools 34.0.0，
+直接复用 ubuntu-latest 预装的 Android SDK，不额外安装 cmdline-tools，
 并开启 `if-no-files-found: error`——若编译失败会直接报红，不会给你一个空包。
 
 ### 方式 B：命令行一键构建
 
 前置条件（缺一不可）：
 
-- **JDK 17 或 21**（JDK 25 不被 Gradle 8.7 支持，会直接失败）
+- **JDK 11 或 17**（本工程以 JDK 11 编译通过为基准；AGP 7.4.2 不支持 JDK 21）
 - **Android SDK**，含 `platforms/android-34` 与 `build-tools/34.0.0`
 - 网络能访问 `dl.google.com` 与 `repo.maven.apache.org`
 
@@ -131,7 +132,7 @@ bash build.sh          # Windows 用 Git Bash 或 WSL
 2. `Settings → Plugins → Marketplace` 搜 **Android**，安装并重启（
    该插件自 2026.2 起仍在更新，兼容构建号 262.*）
 3. `Settings → Languages & Frameworks → Android SDK` 指定 SDK 路径（需 Platform 34）
-4. `Settings → Build Tools → Gradle → Gradle JVM` 设为 **JDK 17 或以上**
+4. `Settings → Build Tools → Gradle → Gradle JVM` 设为 **JDK 11 或 17**
 5. 首次 Sync 会下载依赖；完成后可直接选设备 Run
 
 **IntelliJ IDEA Community**（无 Android 插件）
@@ -144,7 +145,7 @@ bash build.sh          # Windows 用 Git Bash 或 WSL
 
 ### 命令行
 ```bash
-# 需要 JDK 17 + Android SDK Platform 34
+# 需要 JDK 11（或 17）+ Android SDK Platform 34
 export ANDROID_HOME=$HOME/Android/Sdk          # macOS/Linux
 # Windows: set ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk
 
@@ -156,20 +157,23 @@ gradlew.bat assembleDebug                       # Windows
 ```
 
 Wrapper 已随工程提供（`gradlew` / `gradlew.bat` / `gradle/wrapper/gradle-wrapper.jar`），
-无需预装 Gradle，首次运行会自动下载 Gradle 8.7。
+无需预装 Gradle，首次运行会自动下载 Gradle 7.5。
 
 ### 版本矩阵（改版本前请对照）
 
 | 组件 | 本工程版本 | 最低要求 |
 |---|---|---|
-| Gradle | 8.7 | AGP 8.5 要求 ≥ 8.7 |
-| Android Gradle Plugin | 8.5.2 | 需 JDK 17 |
-| Kotlin | 1.9.24 | 与 Compose Compiler 严格配对 |
-| Compose Compiler | 1.5.14 | 必须匹配 Kotlin 1.9.24 |
-| JDK | 17 | 21 亦可（Gradle 8.7 支持） |
+| Gradle | 7.5 | AGP 7.4.2 要求 ≥ 7.5 |
+| Android Gradle Plugin | 7.4.2 | 需 JDK 11 或 17（不支持 21） |
+| Kotlin | 1.9.22 | 与 Compose Compiler 严格配对 |
+| Compose Compiler | 1.5.8 | 必须匹配 Kotlin 1.9.22 |
+| KSP | 1.9.22-1.0.17 | 版本号必须与 Kotlin 严格一致 |
+| JDK | 11 | 17 亦可（AGP 7.4.2 不支持 21+） |
+| jvmTarget | 1.8 | 编译产物兼容 Java 8 字节码，最终打包为 DEX |
 | compileSdk / targetSdk | 34 | minSdk 21 |
 
 > ⚠️ Kotlin 与 Compose Compiler 是强绑定关系，单独升级其中一个必定编译失败。
+> KSP 版本号也必须和 Kotlin 主版本精确对齐（1.9.22-X.Y.Z 对应 Kotlin 1.9.22）。
 > 若要升到 Kotlin 2.x，需同时启用 `org.jetbrains.kotlin.plugin.compose` 插件并移除
 > `composeOptions { kotlinCompilerExtensionVersion }`。
 

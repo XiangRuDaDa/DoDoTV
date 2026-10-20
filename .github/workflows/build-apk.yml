@@ -20,24 +20,21 @@ jobs:
           distribution: temurin
           java-version: '11'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          api-level: 34
-          build-tools: 34.0.0
-          cmake: none
-          ndk: none
-
-      - name: Generate local.properties
-        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-
-      - name: Verify environment
+      - name: Configure Android SDK
         run: |
-          echo "Java: $(java -version 2>&1 | head -n 1)"
-          echo "SDK: $ANDROID_SDK_ROOT"
-          ls "$ANDROID_SDK_ROOT/platforms"
-          ls "$ANDROID_SDK_ROOT/build-tools"
+          set -e
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          if [ ! -d "$SDK_ROOT" ]; then
+            echo "错误：预装 Android SDK 未找到于 $SDK_ROOT" >&2
+            exit 1
+          fi
+          echo "SDK root = $SDK_ROOT"
+          echo "sdk.dir=$SDK_ROOT" > local.properties
           cat local.properties
+          echo "--- platforms ---"
+          ls "$SDK_ROOT/platforms"
+          echo "--- build-tools ---"
+          ls "$SDK_ROOT/build-tools"
 
       - name: Build debug APK
         run: |
