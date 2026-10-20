@@ -11,12 +11,16 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface MediaDao {
 
-    @Query("SELECT * FROM media WHERE kind IN ('MOVIE','SERIES') ORDER BY addedAt DESC")
+    @Query(
+        "SELECT m.* FROM media m JOIN sources s ON m.sourceId = s.id " +
+            "WHERE s.enabled = 1 AND m.kind IN ('MOVIE','SERIES') ORDER BY m.addedAt DESC"
+    )
     fun observeLibrary(): Flow<List<MediaEntity>>
 
     @Query(
-        "SELECT * FROM media WHERE positionMs > 5000 AND kind IN ('MOVIE','EPISODE') " +
-            "ORDER BY lastPlayedAt DESC LIMIT 20"
+        "SELECT m.* FROM media m JOIN sources s ON m.sourceId = s.id " +
+            "WHERE s.enabled = 1 AND m.positionMs > 5000 AND m.kind IN ('MOVIE','EPISODE') " +
+            "ORDER BY m.lastPlayedAt DESC LIMIT 20"
     )
     fun observeContinueWatching(): Flow<List<MediaEntity>>
 
@@ -26,8 +30,25 @@ interface MediaDao {
     @Query("SELECT * FROM media WHERE kind = 'SERIES' ORDER BY addedAt DESC LIMIT 20")
     fun observeSeries(): Flow<List<MediaEntity>>
 
-    @Query("SELECT * FROM media WHERE backdropUrl != '' ORDER BY addedAt DESC LIMIT 8")
+    @Query(
+        "SELECT m.* FROM media m JOIN sources s ON m.sourceId = s.id " +
+            "WHERE s.enabled = 1 AND m.backdropUrl != '' ORDER BY m.addedAt DESC LIMIT 8"
+    )
     fun observeFeatured(): Flow<List<MediaEntity>>
+
+    @Query(
+        "SELECT m.* FROM media m JOIN sources s ON m.sourceId = s.id " +
+            "WHERE s.enabled = 1 AND m.favorite = 1 AND m.kind IN ('MOVIE','SERIES') " +
+            "ORDER BY m.addedAt DESC"
+    )
+    fun observeFavorites(): Flow<List<MediaEntity>>
+
+    @Query(
+        "SELECT m.* FROM media m JOIN sources s ON m.sourceId = s.id " +
+            "WHERE s.enabled = 1 AND m.title LIKE '%' || :keyword || '%' " +
+            "AND m.kind IN ('MOVIE','SERIES') ORDER BY m.addedAt DESC LIMIT 60"
+    )
+    suspend fun search(keyword: String): List<MediaEntity>
 
     @Query("SELECT * FROM media WHERE id = :id")
     suspend fun get(id: Long): MediaEntity?
@@ -55,6 +76,9 @@ interface MediaDao {
 
     @Query("UPDATE media SET positionMs = :position, lastPlayedAt = :ts WHERE id = :id")
     suspend fun saveProgress(id: Long, position: Long, ts: Long)
+
+    @Query("UPDATE media SET favorite = :favorite WHERE id = :id")
+    suspend fun setFavorite(id: Long, favorite: Boolean)
 
     @Query("UPDATE media SET durationMs = :duration WHERE id = :id AND durationMs = 0")
     suspend fun fillDuration(id: Long, duration: Long)

@@ -46,6 +46,7 @@ import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.ui.LibraryViewModel
 import com.tabbit.myvidhub.ui.detail.DetailScreen
 import com.tabbit.myvidhub.ui.home.HomeScreen
+import com.tabbit.myvidhub.ui.home.SearchScreen
 import com.tabbit.myvidhub.ui.player.ViewerActivity
 import com.tabbit.myvidhub.ui.settings.SettingsScreen
 import com.tabbit.myvidhub.ui.sources.SourcesScreen
@@ -58,6 +59,7 @@ private sealed interface Route {
     data object Home : Route
     data object Sources : Route
     data object Settings : Route
+    data object Search : Route
     data class Detail(val mediaId: Long) : Route
 }
 
@@ -107,7 +109,7 @@ private fun AppRoot() {
     }
 
     val currentTab = when (route) {
-        is Route.Home, is Route.Detail -> Tab.HOME
+        is Route.Home, is Route.Detail, is Route.Search -> Tab.HOME
         is Route.Sources -> Tab.SOURCES
         is Route.Settings -> Tab.SETTINGS
     }
@@ -190,6 +192,7 @@ private fun AppRoot() {
                         is Route.Home -> HomeScreen(
                             vm = vm,
                             isTv = isTv,
+                            onOpenSearch = { route = Route.Search },
                             onOpenDetail = { id -> route = Route.Detail(id) },
                             onPlay = { item: MediaEntity ->
                                 context.startActivity(ViewerActivity.intent(context, item.id))
@@ -204,6 +207,13 @@ private fun AppRoot() {
                             onPlay = { id ->
                                 context.startActivity(ViewerActivity.intent(context, id))
                             }
+                        )
+
+                        is Route.Search -> SearchScreen(
+                            vm = vm,
+                            isTv = isTv,
+                            onBack = { route = Route.Home },
+                            onOpenDetail = { id -> route = Route.Detail(id) }
                         )
 
                         is Route.Sources -> SourcesScreen(vm = vm, isTv = isTv)

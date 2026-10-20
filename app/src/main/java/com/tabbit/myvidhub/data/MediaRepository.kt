@@ -31,11 +31,17 @@ class MediaRepository(context: Context) {
     fun observeLibrary(): Flow<List<MediaEntity>> = mediaDao.observeLibrary()
     fun observeContinueWatching(): Flow<List<MediaEntity>> = mediaDao.observeContinueWatching()
     fun observeFeatured(): Flow<List<MediaEntity>> = mediaDao.observeFeatured()
+    fun observeFavorites(): Flow<List<MediaEntity>> = mediaDao.observeFavorites()
+
+    suspend fun search(keyword: String): List<MediaEntity> = mediaDao.search(keyword)
+    suspend fun setFavorite(id: Long, favorite: Boolean) = mediaDao.setFavorite(id, favorite)
 
     suspend fun addSource(source: SourceEntity): Long = sourceDao.insert(source)
     suspend fun getSource(id: Long): SourceEntity? = sourceDao.get(id)
     suspend fun allSources(): List<SourceEntity> = sourceDao.getAll()
+    suspend fun enabledSources(): List<SourceEntity> = sourceDao.getEnabled()
     suspend fun updateSource(source: SourceEntity) = sourceDao.update(source)
+    suspend fun setSourceEnabled(id: Long, enabled: Boolean) = sourceDao.setEnabled(id, enabled)
 
     suspend fun deleteSource(source: SourceEntity) {
         mediaDao.deleteBySource(source.id)

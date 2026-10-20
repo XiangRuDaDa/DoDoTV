@@ -23,6 +23,8 @@ data class SourceEntity(
     val token: String = "",
     /** Emby 用户 Id */
     val userId: String = "",
+    /** 是否启用：停用后不参与同步，其内容也不在首页展示 */
+    val enabled: Boolean = true,
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -65,5 +67,7 @@ data class MediaEntity(
     /** 播放进度，驱动「继续观看」 */
     val positionMs: Long = 0L,
     val lastPlayedAt: Long = 0L,
+    /** 是否收藏 */
+    val favorite: Boolean = false,
     val addedAt: Long = System.currentTimeMillis()
 )

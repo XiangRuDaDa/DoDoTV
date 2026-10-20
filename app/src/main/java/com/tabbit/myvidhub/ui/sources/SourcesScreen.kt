@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -31,6 +32,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -61,6 +64,7 @@ import com.tabbit.myvidhub.ui.theme.AppColors
 fun SourcesScreen(vm: LibraryViewModel, isTv: Boolean) {
     val sources by vm.sources.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<SourceEntity?>(null) }
 
     Scaffold(
         containerColor = AppColors.Bg,
@@ -103,6 +107,8 @@ fun SourcesScreen(vm: LibraryViewModel, isTv: Boolean) {
                         busy = vm.scanning,
                         onSync = { vm.scanOne(src) },
                         onRelogin = { vm.reloginEmby(src) },
+                        onEdit = { editing = src },
+                        onToggle = { vm.toggleSourceEnabled(src) },
                         onDelete = { vm.removeSource(src) }
                     )
                 }
@@ -111,11 +117,23 @@ fun SourcesScreen(vm: LibraryViewModel, isTv: Boolean) {
     }
 
     if (showAdd) {
-        AddSourceDialog(
+        SourceDialog(
+            initial = null,
             onDismiss = { showAdd = false },
             onConfirm = { name, kind, location, user, pass ->
                 vm.addSource(name, kind, location, user, pass)
                 showAdd = false
+            }
+        )
+    }
+
+    editing?.let { src ->
+        SourceDialog(
+            initial = src,
+            onDismiss = { editing = null },
+            onConfirm = { name, kind, location, user, pass ->
+                vm.updateSource(src.id, name, kind, location, user, pass)
+                editing = null
             }
         )
     }
@@ -149,6 +167,8 @@ private fun SourceRow(
     busy: Boolean,
     onSync: () -> Unit,
     onRelogin: () -> Unit,
+    onEdit: () -> Unit,
+    onToggle: () -> Unit,
     onDelete: () -> Unit
 ) {
     Card(
@@ -185,6 +205,19 @@ private fun SourceRow(
                             color = if (source.kind == SourceKind.EMBY) AppColors.Brand else AppColors.TextSecondary
                         )
                     }
+                    if (!source.enabled) {
+                        Box(
+                            Modifier
+                                .background(AppColors.SurfaceHi, RoundedCornerShape(4.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                "已停用",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = AppColors.TextTertiary
+                            )
+                        }
+                    }
                 }
                 Text(
                     source.location,
@@ -200,6 +233,16 @@ private fun SourceRow(
                     )
                 }
             }
+
+            Switch(
+                checked = source.enabled,
+                onCheckedChange = { onToggle() },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = AppColors.Brand,
+                    uncheckedTrackColor = AppColors.SurfaceHi
+                )
+            )
 
             if (busy) {
                 CircularProgressIndicator(
@@ -220,6 +263,14 @@ private fun SourceRow(
                 }
             }
 
+            IconButton(onClick = onEdit) {
+                Icon(
+                    Icons.Filled.Edit,
+                    contentDescription = "编辑",
+                    tint = AppColors.TextSecondary
+                )
+            }
+
             IconButton(onClick = onDelete) {
                 Icon(
                     Icons.Filled.Delete,
@@ -232,21 +283,22 @@ private fun SourceRow(
 }
 
 @Composable
-private fun AddSourceDialog(
+private fun SourceDialog(
+    initial: SourceEntity?,
     onDismiss: () -> Unit,
     onConfirm: (String, SourceKind, String, String, String) -> Unit
 ) {
-    var kind by remember { mutableStateOf(SourceKind.EMBY) }
-    var name by remember { mutableStateOf("") }
-    var location by remember { mutableStateOf("") }
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    var kind by remember { mutableStateOf(initial?.kind ?: SourceKind.EMBY) }
+    var name by remember { mutableStateOf(initial?.name ?: "") }
+    var location by remember { mutableStateOf(initial?.location ?: "") }
+    var username by remember { mutableStateOf(initial?.username ?: "") }
+    var password by remember { mutableStateOf(initial?.password ?: "") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = AppColors.Surface,
         title = {
-            Text("添加视频来源", color = AppColors.TextPrimary)
+            Text(if (initial == null) "添加视频来源" else "编辑视频来源", color = AppColors.TextPrimary)
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -341,7 +393,7 @@ private fun AddSourceDialog(
                     containerColor = AppColors.Brand,
                     contentColor = Color.White
                 )
-            ) { Text("添加") }
+            ) { Text(if (initial == null) "添加" else "保存") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {

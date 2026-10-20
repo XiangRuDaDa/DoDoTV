@@ -2,6 +2,7 @@ package com.tabbit.myvidhub.ui.theme
 
 import android.app.UiModeManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
@@ -11,7 +12,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
-import com.tabbit.myvidhub.core.Prefs
 
 /** VidHub 式深色影音配色：近黑底 + 蓝紫强调色 */
 object AppColors {
@@ -53,9 +53,13 @@ private val AppTypography = Typography(
 )
 
 fun Context.isTelevision(): Boolean {
-    if (Prefs.forceTvMode) return true
-    val manager = getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager ?: return false
-    return manager.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+    val manager = getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
+    if (manager?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION) return true
+
+    // 兜底：电视盒子常以普通模式上报，用 Leanback 特性/无触摸屏来识别
+    val hasLeanback = packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+    val hasTouchscreen = packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
+    return hasLeanback || !hasTouchscreen
 }
 
 @Composable

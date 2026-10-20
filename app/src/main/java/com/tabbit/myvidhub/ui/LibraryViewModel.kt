@@ -32,6 +32,9 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val featured: StateFlow<List<MediaEntity>> = repo.observeFeatured()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val favorites: StateFlow<List<MediaEntity>> = repo.observeFavorites()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     var scanning by mutableStateOf(false)
         private set
 
@@ -57,23 +60,90 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             val entity = SourceEntity(
                 name = name.trim(),
                 kind = kind,
-                location = location.trim().let {
-                    if (kind == SourceKind.EMBY) it.trimEnd('/') else it
-                },
+                location = normalizeLocation(kind, location),
                 username = username.trim(),
                 password = password
             )
             val id = repo.addSource(entity)
+            val created = entity.copy(id = id)
 
             // Emby 立即尝试登录换取 token，失败也保留来源便于用户修正
             if (kind == SourceKind.EMBY) {
-                val created = entity.copy(id = id)
                 val error = repo.embyLogin(created)
-                message = error ?: "已添加 Emby：${entity.name}"
-            } else {
-                message = "已添加 TVBox：${entity.name}"
+                if (error != null) {
+                    message = "$error（来源已保存，可稍后编辑修正）"
+                    return@launch
+                }
             }
+            syncAfterChange(repo.getSource(id) ?: created, created.name, "已添加")
         }
+    }
+
+    fun updateSource(
+        id: Long,
+        name: String,
+        kind: SourceKind,
+        location: String,
+        username: String,
+        password: String
+    ) {
+        if (name.isBlank() || location.isBlank()) {
+            message = "名称与地址不能为空"
+            return
+        }
+        viewModelScope.launch {
+            val existing = repo.getSource(id) ?: return@launch
+            val newLocation = normalizeLocation(kind, location)
+            val newName = name.trim()
+            val newUser = username.trim()
+            val credentialsChanged = existing.location != newLocation ||
+                existing.username != newUser || existing.password != password
+
+            var updated = existing.copy(
+                name = newName,
+                kind = kind,
+                location = newLocation,
+                username = newUser,
+                password = password,
+                token = if (credentialsChanged) "" else existing.token,
+                userId = if (credentialsChanged) "" else existing.userId
+            )
+            repo.updateSource(updated)
+
+            if (kind == SourceKind.EMBY && updated.token.isBlank()) {
+                val error = repo.embyLogin(updated)
+                if (error != null) {
+                    message = "$error（配置已保存，可稍后重试）"
+                    return@launch
+                }
+            }
+            updated = repo.getSource(id) ?: updated
+            syncAfterChange(updated, newName, "已更新")
+        }
+    }
+
+    private fun normalizeLocation(kind: SourceKind, location: String): String =
+        location.trim().let { if (kind == SourceKind.EMBY) it.trimEnd('/') else it }
+
+    /** 新增/编辑完成后自动同步该来源，解决“添加后首页无数据” */
+    private suspend fun syncAfterChange(source: SourceEntity, label: String, action: String) {
+        scanning = true
+        scanMessage = "正在同步 $label…"
+        try {
+            val count = runSync(source)
+            message = if (count > 0) "$action $label，已同步 $count 个条目"
+            else "$action $label，但未获取到内容"
+        } catch (e: Exception) {
+            message = "$action $label，同步失败：${e.message ?: "网络或接口异常"}"
+        } finally {
+            scanning = false
+            scanMessage = ""
+        }
+    }
+
+    private suspend fun runSync(source: SourceEntity): Int = when (source.kind) {
+        SourceKind.EMBY -> repo.syncEmby(source) { c -> scanMessage = "${source.name}：$c" }
+        SourceKind.TVBOX -> repo.syncTvBox(source) { c -> scanMessage = "${source.name}：$c" }
     }
 
     fun removeSource(source: SourceEntity) {
@@ -93,6 +163,23 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 启用 / 停用来源：停用后不同步，其内容也从首页隐藏 */
+    fun toggleSourceEnabled(source: SourceEntity) {
+        viewModelScope.launch {
+            repo.setSourceEnabled(source.id, !source.enabled)
+            message = if (source.enabled) "已停用：${source.name}" else "已启用：${source.name}"
+        }
+    }
+
+    // ---------- 收藏 ----------
+
+    fun toggleFavorite(mediaId: Long, favorite: Boolean) {
+        viewModelScope.launch { repo.setFavorite(mediaId, favorite) }
+    }
+
+    suspend fun searchMedia(keyword: String): List<MediaEntity> =
+        if (keyword.isBlank()) emptyList() else repo.search(keyword)
+
     // ---------- 扫描 ----------
 
     fun scanAll() {
@@ -102,12 +189,9 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             scanMessage = "准备同步…"
             var total = 0
             try {
-                for (src in sources.value) {
+                for (src in repo.enabledSources()) {
                     scanMessage = "正在同步 ${src.name}…"
-                    total += when (src.kind) {
-                        SourceKind.EMBY -> repo.syncEmby(src) { c -> scanMessage = "${src.name}：$c" }
-                        SourceKind.TVBOX -> repo.syncTvBox(src) { c -> scanMessage = "${src.name}：$c" }
-                    }
+                    total += runSync(src)
                 }
                 message = if (total > 0) "同步完成，共 $total 个条目" else "没有获取到内容"
             } catch (e: Exception) {
@@ -124,10 +208,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             scanning = true
             try {
-                val added = when (source.kind) {
-                    SourceKind.EMBY -> repo.syncEmby(source) { c -> scanMessage = "${source.name}：$c" }
-                    SourceKind.TVBOX -> repo.syncTvBox(source) { c -> scanMessage = "${source.name}：$c" }
-                }
+                val added = runSync(source)
                 message = if (added > 0) "${source.name}：$added 个条目" else "${source.name}：无内容"
             } catch (e: Exception) {
                 message = "同步失败：${e.message ?: "未知错误"}"

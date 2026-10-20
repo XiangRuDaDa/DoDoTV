@@ -24,7 +24,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -265,6 +267,25 @@ fun DetailScreen(
                                         ?: visibleEpisodes.firstOrNull()
                                     ep?.let { "继续观看  ${it.title}" } ?: "开始播放"
                                 } else "播放"
+                            )
+                        }
+
+                        val fav = item.favorite
+                        IconButton(
+                            onClick = {
+                                val next = !fav
+                                vm.toggleFavorite(item.id, next)
+                                media = media?.copy(favorite = next)
+                            },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(AppColors.SurfaceHi)
+                        ) {
+                            Icon(
+                                if (fav) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                                contentDescription = if (fav) "取消收藏" else "收藏",
+                                tint = if (fav) AppColors.Brand else AppColors.TextSecondary
                             )
                         }
                     }

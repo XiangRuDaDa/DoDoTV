@@ -17,6 +17,9 @@ interface SourceDao {
     @Query("SELECT * FROM sources ORDER BY createdAt ASC")
     suspend fun getAll(): List<SourceEntity>
 
+    @Query("SELECT * FROM sources WHERE enabled = 1 ORDER BY createdAt ASC")
+    suspend fun getEnabled(): List<SourceEntity>
+
     @Query("SELECT * FROM sources WHERE id = :id")
     suspend fun get(id: Long): SourceEntity?
 
@@ -25,6 +28,9 @@ interface SourceDao {
 
     @Update
     suspend fun update(source: SourceEntity)
+
+    @Query("UPDATE sources SET enabled = :enabled WHERE id = :id")
+    suspend fun setEnabled(id: Long, enabled: Boolean)
 
     @Delete
     suspend fun delete(source: SourceEntity)

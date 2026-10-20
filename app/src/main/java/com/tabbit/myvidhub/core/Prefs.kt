@@ -2,7 +2,6 @@ package com.tabbit.myvidhub.core
 
 import android.content.Context
 import android.content.SharedPreferences
-import androidx.core.content.edit
 
 /**
  * 轻量本地配置。
@@ -11,7 +10,6 @@ import androidx.core.content.edit
 object Prefs {
 
     private const val FILE = "myvidhub_prefs"
-    private const val KEY_TV_MODE = "force_tv_mode"
 
     private lateinit var sp: SharedPreferences
 
@@ -21,7 +19,4 @@ object Prefs {
         }
     }
 
-    var forceTvMode: Boolean
-        get() = sp.getBoolean(KEY_TV_MODE, false)
-        set(value) = sp.edit { putBoolean(KEY_TV_MODE, value) }
 }

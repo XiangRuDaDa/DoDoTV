@@ -13,6 +13,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -68,6 +70,7 @@ class ViewerActivity : ComponentActivity() {
 
     private var titleState by mutableStateOf("")
     private var toastState by mutableStateOf<String?>(null)
+    private var speedState by mutableStateOf(1f)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,6 +89,8 @@ class ViewerActivity : ComponentActivity() {
                 PlayerScreen(
                     title = titleState,
                     toast = toastState,
+                    speed = speedState,
+                    onSpeed = { applySpeed(it) },
                     onViewCreated = { view ->
                         playerView = view
                         player?.let { view.player = it }
@@ -105,6 +110,11 @@ class ViewerActivity : ComponentActivity() {
             titleState = displayTitle(item)
             startPlayback(item)
         }
+    }
+
+    private fun applySpeed(speed: Float) {
+        speedState = speed
+        player?.setPlaybackSpeed(speed)
     }
 
     private fun displayTitle(item: MediaEntity): String =
@@ -127,6 +137,7 @@ class ViewerActivity : ComponentActivity() {
         p.setMediaItem(MediaItem.fromUri(Uri.parse(item.uri)))
         p.prepare()
         if (startPosition > 3_000L) p.seekTo(startPosition)
+        p.setPlaybackSpeed(speedState)
         p.playWhenReady = true
 
         p.addListener(object : Player.Listener {
@@ -159,6 +170,7 @@ class ViewerActivity : ComponentActivity() {
             player?.let { p ->
                 p.setMediaItem(MediaItem.fromUri(Uri.parse(next.uri)))
                 p.prepare()
+                p.setPlaybackSpeed(speedState)
                 p.playWhenReady = true
             }
         }
@@ -236,6 +248,8 @@ class ViewerActivity : ComponentActivity() {
 private fun PlayerScreen(
     title: String,
     toast: String?,
+    speed: Float,
+    onSpeed: (Float) -> Unit,
     onViewCreated: (PlayerView) -> Unit
 ) {
     var showTitle by remember { mutableStateOf(true) }
@@ -298,8 +312,32 @@ private fun PlayerScreen(
                 .fillMaxWidth()
                 .padding(bottom = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SpeedOptions.forEach { option ->
+                    val selected = kotlin.math.abs(speed - option) < 0.01f
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (selected) AppColors.Brand else Color.Black.copy(alpha = 0.5f)
+                            )
+                            .clickable { onSpeed(option) }
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = formatSpeed(option),
+                            color = if (selected) Color.White else Color.White.copy(alpha = 0.85f),
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                }
+            }
+
             Text(
                 "← →  快进 / 快退     确认键  暂停 / 播放     返回键  退出",
                 color = AppColors.TextTertiary.copy(alpha = 0.55f),
@@ -308,3 +346,8 @@ private fun PlayerScreen(
         }
     }
 }
+
+private val SpeedOptions = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+
+private fun formatSpeed(s: Float): String =
+    if (s == s.toInt().toFloat()) "${s.toInt()}x" else "${s}x"

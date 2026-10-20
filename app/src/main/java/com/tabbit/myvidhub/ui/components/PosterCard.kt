@@ -198,11 +198,19 @@ fun SectionTitle(
             .padding(horizontal = 18.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        Box(
+            Modifier
+                .size(width = 3.dp, height = 16.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(AppColors.Brand)
+        )
         Text(
             text = text,
             style = MaterialTheme.typography.titleLarge,
             color = AppColors.TextPrimary,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 8.dp)
         )
         trailing?.invoke()
     }
