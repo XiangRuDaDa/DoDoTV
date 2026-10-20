@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.tabbit.myvidhub.ui.components
 
 import androidx.compose.foundation.background

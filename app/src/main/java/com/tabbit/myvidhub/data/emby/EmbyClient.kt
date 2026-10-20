@@ -175,7 +175,8 @@ class EmbyClient(
         val out = ArrayList<Item>(arr.length())
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
-            val id = o.optString("Id").ifBlank { continue }
+            val id = o.optString("Id")
+            if (id.isBlank()) continue
             val type = o.optString("Type")
             val imageTags = o.optJSONObject("ImageTags")
             val backdropTags = o.optJSONObject("BackdropImageTags")
