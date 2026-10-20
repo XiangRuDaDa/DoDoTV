@@ -1,12 +1,5 @@
 name: Build APK
 
-# 云端构建可安装的 APK，本地无需 Android SDK。
-# 触发方式：push 到 main/master，或在 Actions 页面手动 Run workflow。
-#
-# 说明：不使用 android-actions/setup-android，因为它会尝试安装已下线的
-# "tools" 包并报 "Failed to find package 'tools'"。这里直接复用
-# ubuntu-latest 运行器预装的 Android SDK。
-
 on:
   push:
     branches: [ main, master ]
@@ -15,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -27,51 +20,29 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Configure Android SDK
-        run: |
-          set -e
-          SDK_ROOT=""
-          for candidate in "$ANDROID_SDK_ROOT" "$ANDROID_HOME" /usr/local/lib/android/sdk "$HOME/Android/Sdk"; do
-            if [ -n "$candidate" ] && [ -d "$candidate" ]; then
-              SDK_ROOT="$candidate"
-              break
-            fi
-          done
-          if [ -z "$SDK_ROOT" ]; then
-            echo "错误：运行器上没有找到 Android SDK" >&2
-            exit 1
-          fi
-          echo "SDK root = $SDK_ROOT"
-          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "sdk.dir=$SDK_ROOT" > local.properties
-          cat local.properties
-          echo "--- 已安装的 platforms ---"
-          ls "$SDK_ROOT/platforms" || true
-          echo "--- 已安装的 build-tools ---"
-          ls "$SDK_ROOT/build-tools" || true
-
-      - name: Ensure SDK platform and build-tools
-        run: |
-          SDKMANAGER="$(find "$ANDROID_SDK_ROOT" -type f -name sdkmanager 2>/dev/null | head -n 1)"
-          if [ -z "$SDKMANAGER" ]; then
-            echo "未找到 sdkmanager，跳过安装（依赖预装组件）"
-            exit 0
-          fi
-          echo "sdkmanager = $SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-          "$SDKMANAGER" --install "platforms;android-34" "build-tools;34.0.0" "platform-tools" \
-            || echo "提示：部分组件安装失败，若已预装可忽略"
-
-      - name: Set up Gradle 8.7
-        uses: gradle/actions/setup-gradle@v3
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
         with:
-          gradle-version: '8.7'
+          api-level: 34
+          build-tools: 34.0.0
+          cmake: none
+          ndk: none
+
+      - name: Generate local.properties
+        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+
+      - name: Verify environment
+        run: |
+          echo "Java: $(java -version 2>&1 | head -n 1)"
+          echo "SDK: $ANDROID_SDK_ROOT"
+          ls "$ANDROID_SDK_ROOT/platforms"
+          ls "$ANDROID_SDK_ROOT/build-tools"
+          cat local.properties
 
       - name: Build debug APK
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace --no-daemon
+          ./gradlew assembleDebug --stacktrace --info --no-daemon
 
       - name: List output
         run: ls -lh app/build/outputs/apk/debug/
