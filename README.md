@@ -72,28 +72,106 @@ MyVidHub/
 
 ---
 
-## 三、编译
+## 三、如何得到可安装的 APK
 
-### Android Studio（推荐）
+> 本仓库已包含：完整源码、Gradle Wrapper（`gradlew`，无需预装 Gradle）、一键脚本 `build.sh`、
+> 云端构建配置 `.github/workflows/build-apk.yml`。三条路任选一条，产物都是
+> `app/build/outputs/apk/debug/app-debug.apk`。
+
+| 方式 | 适用场景 | 你需要准备 | 首次耗时 |
+|---|---|---|---|
+| **A. GitHub Actions 云端构建** | 不想在电脑上装任何 Android 环境 | 一个 GitHub 账号 | 约 6–10 分钟 |
+| **B. `./build.sh` 一键构建** | 已有 JDK 与 Android SDK | JDK 17+、Android SDK 34 | 约 10 分钟（含下载依赖） |
+| **C. Android Studio** | 想改代码、看 Compose 预览、断点调试 | 安装 Android Studio | 约 5 分钟同步 |
+
+### 方式 A：GitHub Actions 云端构建（最省事，推荐给只想拿安装包的人）
+
+1. 在 GitHub 新建一个空仓库（Private 也可以，Actions 免费额度足够）
+2. 把 `MyVidHub` 目录内容推到该仓库的 `main` 分支：
+   ```bash
+   cd MyVidHub
+   git init && git add . && git commit -m "init"
+   git remote add origin https://github.com/<你的用户名>/<仓库名>.git
+   git push -u origin main
+   ```
+3. 推送后自动触发构建（也可在仓库 **Actions** 页点 `Build APK` → `Run workflow` 手动触发）
+4. 构建完成（绿色 ✓）后，点进这次运行，页面底部 **Artifacts** 下载 `MyVidHub-debug-apk`
+5. 解压得到 `app-debug.apk` → 传到手机 / U 盘拷到电视盒子安装
+
+CI 已固定 JDK 17、Gradle 8.7、SDK Platform 34 与 Build-Tools 34.0.0，
+并开启 `if-no-files-found: error`——若编译失败会直接报红，不会给你一个空包。
+
+### 方式 B：命令行一键构建
+
+前置条件（缺一不可）：
+
+- **JDK 17 或 21**（JDK 25 不被 Gradle 8.7 支持，会直接失败）
+- **Android SDK**，含 `platforms/android-34` 与 `build-tools/34.0.0`
+- 网络能访问 `dl.google.com` 与 `repo.maven.apache.org`
+
+```bash
+cd MyVidHub
+bash build.sh          # Windows 用 Git Bash 或 WSL
+```
+
+脚本会依次校验 Java 版本、定位 SDK 并写 `local.properties`、缺失组件时自动调
+`sdkmanager` 安装、最后执行 `gradlew assembleDebug`，并打印 APK 路径与 `adb install` 命令。
+
+### 方式 C：Android Studio（推荐用于开发）
 1. Android Studio Hedgehog (2023.1.1) 或更新
 2. `File → Open` 选择 `MyVidHub` 目录
 3. 等待 Gradle 同步（首次下载依赖约 400–600MB）
 4. 连接设备/模拟器，点 ▶ 运行
 
+### IntelliJ IDEA（Ultimate 版）
+本工程是标准 Gradle + AGP 项目，IDEA 可以打开，但需要区分版本能力：
+
+**IntelliJ IDEA Ultimate**（含 Android 插件）
+1. `File → Open` 选择 `MyVidHub` 的 `build.gradle.kts`（或整个目录），选 **Open as Project**
+2. `Settings → Plugins → Marketplace` 搜 **Android**，安装并重启（
+   该插件自 2026.2 起仍在更新，兼容构建号 262.*）
+3. `Settings → Languages & Frameworks → Android SDK` 指定 SDK 路径（需 Platform 34）
+4. `Settings → Build Tools → Gradle → Gradle JVM` 设为 **JDK 17 或以上**
+5. 首次 Sync 会下载依赖；完成后可直接选设备 Run
+
+**IntelliJ IDEA Community**（无 Android 插件）
+- 可以正常打开、浏览与编辑代码（Kotlin / Compose 语法高亮、跳转、补全均可用）
+- 但没有 Android SDK 集成、没有 Run 配置、没有 Compose Preview、没有 Layout Inspector
+- 想构建 APK 只能用终端跑 `./gradlew assembleDebug`
+
+> 纯 Android 开发仍建议用 Android Studio：Compose Preview、Layout Inspector、APK Analyzer、
+> 设备镜像等工具链比 IDEA 领先数个版本。
+
 ### 命令行
 ```bash
 # 需要 JDK 17 + Android SDK Platform 34
-export ANDROID_HOME=$HOME/Android/Sdk
+export ANDROID_HOME=$HOME/Android/Sdk          # macOS/Linux
+# Windows: set ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk
+
 echo "sdk.dir=$ANDROID_HOME" > local.properties
 
-# 仓库未内置 gradle-wrapper.jar（二进制），首次补全
-gradle wrapper --gradle-version 8.7
-
-./gradlew assembleDebug
+./gradlew assembleDebug                         # macOS/Linux
+gradlew.bat assembleDebug                       # Windows
 # → app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> 未内置 wrapper jar 是刻意的：二进制文件不经过文本编辑流程，交给 Gradle/IDE 自动补全更可靠。
+Wrapper 已随工程提供（`gradlew` / `gradlew.bat` / `gradle/wrapper/gradle-wrapper.jar`），
+无需预装 Gradle，首次运行会自动下载 Gradle 8.7。
+
+### 版本矩阵（改版本前请对照）
+
+| 组件 | 本工程版本 | 最低要求 |
+|---|---|---|
+| Gradle | 8.7 | AGP 8.5 要求 ≥ 8.7 |
+| Android Gradle Plugin | 8.5.2 | 需 JDK 17 |
+| Kotlin | 1.9.24 | 与 Compose Compiler 严格配对 |
+| Compose Compiler | 1.5.14 | 必须匹配 Kotlin 1.9.24 |
+| JDK | 17 | 21 亦可（Gradle 8.7 支持） |
+| compileSdk / targetSdk | 34 | minSdk 21 |
+
+> ⚠️ Kotlin 与 Compose Compiler 是强绑定关系，单独升级其中一个必定编译失败。
+> 若要升到 Kotlin 2.x，需同时启用 `org.jetbrains.kotlin.plugin.compose` 插件并移除
+> `composeOptions { kotlinCompilerExtensionVersion }`。
 
 ---
 
