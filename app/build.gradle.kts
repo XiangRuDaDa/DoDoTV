@@ -50,7 +50,7 @@ android {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
 
-    packaging {
+    packagingOptions {
         resources.excludes += setOf(
             "/META-INF/{AL2.0,LGPL2.1}",
             "/META-INF/DEPENDENCIES",
