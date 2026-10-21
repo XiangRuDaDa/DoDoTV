@@ -54,6 +54,31 @@ class MediaRepository(context: Context) {
     suspend fun seasons(seriesKey: String): List<Int> = mediaDao.seasons(seriesKey)
     suspend fun hasAnyMedia(): Boolean = mediaDao.countAll() > 0
 
+    // ---------------- 首页分类 / 浏览页 ----------------
+
+    /** 首页画廊：每类只取最新 N 条（懒加载，避免整库刷进内存） */
+    fun observeRecent(kind: String, limit: Int): Flow<List<MediaEntity>> =
+        mediaDao.observeRecent(kind, limit)
+
+    fun observeAnime(limit: Int): Flow<List<MediaEntity>> = mediaDao.observeAnime(limit)
+
+    /** 分类浏览页分页查询 */
+    suspend fun byGenre(kind: String?, genre: String?, limit: Int, offset: Int): List<MediaEntity> =
+        mediaDao.byGenre(kind, genre, limit, offset)
+
+    /** 类型标签：拆分聚合后按出现次数排序 */
+    suspend fun genreTags(limit: Int = 16): List<String> =
+        mediaDao.distinctGenres()
+            .flatMap { it.split(" / ", "/", ",", "，", " ") }
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .groupingBy { it }
+            .eachCount()
+            .entries
+            .sortedByDescending { it.value }
+            .take(limit)
+            .map { it.key }
+
     /**
      * 按 remoteId 写入元数据。
      * 已存在时保留 id / 播放进度 / 收藏 / 添加时间，只刷新标题、海报与播放地址。
@@ -96,7 +121,13 @@ class MediaRepository(context: Context) {
         }
     }
 
-    /** 同步 Emby 媒体库 */
+    /**
+     * 同步 Emby 媒体库 —— 整库只发一次列表请求。
+     *
+     * 与 VidHub 等主流播放器一致：列表阶段只入库「电影 + 剧集壳」，
+     * 分集在用户点进详情页时按需加载（loadEmbyDetail）。
+     * 之前逐部剧集循环拉分集，几十部剧就是几十个请求，又慢又容易被服务器限流。
+     */
     suspend fun syncEmby(source: SourceEntity, onProgress: (Int) -> Unit = {}): Int =
         withContext(Dispatchers.IO) {
             if (source.token.isBlank()) {
@@ -111,72 +142,66 @@ class MediaRepository(context: Context) {
             if (items.isEmpty()) return@withContext 0
 
             var count = 0
-
             for (item in items) {
-                // 统一加上 sourceId：多台 Emby 时不会因 itemId 相同而互相覆盖
-                val seriesKey = "emby:${source.id}:${item.id}"
-                if (item.isSeries) {
-                    val shell = MediaEntity(
+                // remoteId 统一带 sourceId：多台 Emby 时不会因 itemId 相同而互相覆盖
+                val key = "emby:${source.id}:${item.id}"
+                val isSeries = item.isSeries
+                saveMedia(
+                    MediaEntity(
                         sourceId = source.id,
-                        uri = "",
-                        remoteId = seriesKey,
-                        seriesKey = seriesKey,
+                        uri = if (isSeries) "" else EmbyClient.playbackUrl(source.location, item.id, source.token),
+                        remoteId = key,
+                        seriesKey = if (isSeries) key else "",
                         title = item.name,
-                        kind = MediaKind.SERIES,
+                        kind = if (isSeries) MediaKind.SERIES else MediaKind.MOVIE,
                         year = item.year,
                         overview = item.overview,
                         posterUrl = item.posterUrl,
                         backdropUrl = item.backdropUrl,
                         rating = item.rating,
-                        genres = item.genres
+                        genres = item.genres,
+                        durationMs = item.runTimeMs
                     )
-                    saveMedia(shell)
-                    count++
-
-                    // 拉分集；重新登录后 token 变化，会顺带刷新旧播放地址
-                    val episodes = client.fetchEpisodes(item.id)
-                    for (ep in episodes) {
-                        saveMedia(
-                            MediaEntity(
-                                sourceId = source.id,
-                                uri = EmbyClient.playbackUrl(source.location, ep.id, source.token),
-                                remoteId = "emby:${source.id}:${ep.id}",
-                                seriesKey = seriesKey,
-                                title = ep.name,
-                                kind = MediaKind.EPISODE,
-                                season = ep.parentIndexNumber,
-                                episode = ep.indexNumber,
-                                overview = ep.overview,
-                                durationMs = ep.runTimeMs,
-                                posterUrl = ep.posterUrl,
-                                backdropUrl = item.backdropUrl
-                            )
-                        )
-                    }
-                    onProgress(count)
-                } else {
-                    saveMedia(
-                        MediaEntity(
-                            sourceId = source.id,
-                            uri = EmbyClient.playbackUrl(source.location, item.id, source.token),
-                            remoteId = seriesKey,
-                            seriesKey = "",
-                            title = item.name,
-                            kind = MediaKind.MOVIE,
-                            year = item.year,
-                            overview = item.overview,
-                            posterUrl = item.posterUrl,
-                            backdropUrl = item.backdropUrl,
-                            rating = item.rating,
-                            genres = item.genres,
-                            durationMs = item.runTimeMs
-                        )
-                    )
-                    count++
-                    if (count % 5 == 0) onProgress(count)
-                }
+                )
+                count++
+                if (count % 20 == 0) onProgress(count)
             }
             count
+        }
+
+    /**
+     * 详情页按需拉取 Emby 分集并入库。
+     * @return true 表示拿到了分集
+     */
+    suspend fun loadEmbyDetail(source: SourceEntity, remoteId: String): Boolean =
+        withContext(Dispatchers.IO) {
+            // remoteId 形如 emby:{sourceId}:{itemId}
+            val itemId = remoteId.removePrefix("emby:${source.id}:")
+            if (itemId.isBlank() || ':' in itemId) return@withContext false
+            val shell = mediaDao.byRemoteId(remoteId) ?: return@withContext false
+            val seriesKey = shell.seriesKey.ifBlank { remoteId }
+
+            val client = EmbyClient(source.location, source.token, source.userId)
+            val episodes = client.fetchEpisodes(itemId)
+            episodes.forEachIndexed { index, ep ->
+                saveMedia(
+                    MediaEntity(
+                        sourceId = source.id,
+                        uri = EmbyClient.playbackUrl(source.location, ep.id, source.token),
+                        remoteId = "emby:${source.id}:${ep.id}",
+                        seriesKey = seriesKey,
+                        title = ep.name.ifBlank { "第 ${index + 1} 集" },
+                        kind = MediaKind.EPISODE,
+                        season = ep.parentIndexNumber,
+                        episode = ep.indexNumber,
+                        overview = ep.overview,
+                        durationMs = ep.runTimeMs,
+                        posterUrl = ep.posterUrl,
+                        backdropUrl = shell.backdropUrl
+                    )
+                )
+            }
+            episodes.isNotEmpty()
         }
 
     // ---------------- TVBox ----------------

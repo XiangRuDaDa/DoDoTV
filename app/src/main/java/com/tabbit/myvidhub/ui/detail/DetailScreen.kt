@@ -92,13 +92,22 @@ fun DetailScreen(
         if (m != null && m.kind == MediaKind.SERIES) {
             var eps = vm.episodesOf(m.seriesKey)
 
-            // TVBox：分集需要按需拉取
+            // 分集按需拉取（TVBox 详情 / Emby 分集都不随整库同步）
             if (eps.isEmpty()) {
                 val src = vm.sourceOf(m.sourceId)
-                if (src != null && src.kind == SourceKind.TVBOX) {
-                    vm.loadTvBoxDetail(m.sourceId, m.remoteId)
-                    eps = vm.episodesOf(m.seriesKey)
-                    media = vm.mediaOf(mediaId) ?: m
+                when (src?.kind) {
+                    SourceKind.TVBOX -> {
+                        vm.loadTvBoxDetail(m.sourceId, m.remoteId)
+                        eps = vm.episodesOf(m.seriesKey)
+                        media = vm.mediaOf(mediaId) ?: m
+                    }
+                    SourceKind.EMBY -> {
+                        if (vm.loadEmbyEpisodes(m.sourceId, m.remoteId)) {
+                            eps = vm.episodesOf(m.seriesKey)
+                            media = vm.mediaOf(mediaId) ?: m
+                        }
+                    }
+                    null -> Unit
                 }
             }
 

@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tabbit.myvidhub.data.MediaRepository
 import com.tabbit.myvidhub.data.model.MediaEntity
+import com.tabbit.myvidhub.data.model.MediaKind
 import com.tabbit.myvidhub.data.model.SourceEntity
 import com.tabbit.myvidhub.data.model.SourceKind
 import com.tabbit.myvidhub.data.tvbox.TvBoxClient
@@ -33,6 +34,16 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val favorites: StateFlow<List<MediaEntity>> = repo.observeFavorites()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 首页画廊：每类只取最新 10 条（懒加载） */
+    val recentMovies: StateFlow<List<MediaEntity>> = repo.observeRecent(MediaKind.MOVIE, 10)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val recentSeries: StateFlow<List<MediaEntity>> = repo.observeRecent(MediaKind.SERIES, 10)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val recentAnime: StateFlow<List<MediaEntity>> = repo.observeAnime(10)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     var scanning by mutableStateOf(false)
@@ -216,6 +227,13 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun searchMedia(keyword: String): List<MediaEntity> =
         if (keyword.isBlank()) emptyList() else repo.search(keyword)
 
+    /** 分类浏览页：按类型/题材分页查询 */
+    suspend fun browseGenre(kind: String?, genre: String?, limit: Int, offset: Int): List<MediaEntity> =
+        repo.byGenre(kind, genre, limit, offset)
+
+    /** 类型标签（按内容数量排序） */
+    suspend fun genreTags(): List<String> = repo.genreTags()
+
     // ---------- 扫描 ----------
 
     fun scanAll() {
@@ -279,6 +297,17 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             message = "获取详情失败：${e.message ?: "网络或接口异常"}"
             emptyList()
+        }
+    }
+
+    /** Emby 分集按需拉取（列表同步只入库剧集壳，分集进详情时再取） */
+    suspend fun loadEmbyEpisodes(sourceId: Long, remoteId: String): Boolean {
+        val src = repo.getSource(sourceId) ?: return false
+        return try {
+            repo.loadEmbyDetail(src, remoteId)
+        } catch (e: Exception) {
+            message = "获取分集失败：${e.message ?: "网络或接口异常"}"
+            false
         }
     }
 

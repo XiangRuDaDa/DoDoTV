@@ -45,6 +45,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.ui.LibraryViewModel
 import com.tabbit.myvidhub.ui.detail.DetailScreen
+import com.tabbit.myvidhub.ui.home.GenreScreen
 import com.tabbit.myvidhub.ui.home.HomeScreen
 import com.tabbit.myvidhub.ui.home.SearchScreen
 import com.tabbit.myvidhub.ui.player.ViewerActivity
@@ -61,6 +62,9 @@ private sealed interface Route {
     data object Settings : Route
     data object Search : Route
     data class Detail(val mediaId: Long) : Route
+
+    /** 分类浏览页：kind=电影/剧集类型，genre=动漫等题材 */
+    data class Genre(val kind: String?, val genre: String?) : Route
 }
 
 /**
@@ -109,7 +113,7 @@ private fun AppRoot() {
     }
 
     val currentTab = when (route) {
-        is Route.Home, is Route.Detail, is Route.Search -> Tab.HOME
+        is Route.Home, is Route.Detail, is Route.Search, is Route.Genre -> Tab.HOME
         is Route.Sources -> Tab.SOURCES
         is Route.Settings -> Tab.SETTINGS
     }
@@ -165,14 +169,15 @@ private fun AppRoot() {
                 targetState = route,
                 transitionSpec = {
                     when {
-                        // 进入详情：从右侧轻推入 + 淡入，营造"下钻"层次
-                        targetState is Route.Detail ->
+                        // 进入详情/分类：从右侧轻推入 + 淡入，营造"下钻"层次
+                        targetState is Route.Detail || targetState is Route.Genre ->
                             (slideInHorizontally(animationSpec = tween(300)) { it / 6 } +
                                 fadeIn(tween(260)))
                                 .togetherWith(fadeOut(tween(160)))
 
                         // 从详情返回：详情向左退出，列表从侧后浮现
-                        initialState is Route.Detail && targetState is Route.Home ->
+                        (initialState is Route.Detail || initialState is Route.Genre) &&
+                            targetState is Route.Home ->
                             (fadeIn(tween(260)) +
                                 slideInHorizontally(animationSpec = tween(300)) { -it / 12 })
                                 .togetherWith(
@@ -194,9 +199,19 @@ private fun AppRoot() {
                             isTv = isTv,
                             onOpenSearch = { route = Route.Search },
                             onOpenDetail = { id -> route = Route.Detail(id) },
+                            onOpenGenre = { kind, genre -> route = Route.Genre(kind, genre) },
                             onPlay = { item: MediaEntity ->
                                 context.startActivity(ViewerActivity.intent(context, item.id))
                             }
+                        )
+
+                        is Route.Genre -> GenreScreen(
+                            vm = vm,
+                            isTv = isTv,
+                            initialKind = target.kind,
+                            initialGenre = target.genre,
+                            onBack = { route = Route.Home },
+                            onOpenDetail = { id -> route = Route.Detail(id) }
                         )
 
                         is Route.Detail -> DetailScreen(

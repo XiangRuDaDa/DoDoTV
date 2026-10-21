@@ -98,4 +98,31 @@ interface MediaDao {
 
     @Query("SELECT COUNT(*) FROM media")
     suspend fun countAll(): Int
+
+    /** 首页分类画廊：每类只取最新 N 条，避免一次性加载全库 */
+    @Query(
+        "SELECT m.* FROM media m JOIN sources s ON m.sourceId = s.id " +
+            "WHERE s.enabled = 1 AND m.kind = :kind ORDER BY m.addedAt DESC LIMIT :limit"
+    )
+    fun observeRecent(kind: String, limit: Int): Flow<List<MediaEntity>>
+
+    /** 动漫：类型字段包含"动漫/动画/Animation"即命中 */
+    @Query(
+        "SELECT m.* FROM media m JOIN sources s ON m.sourceId = s.id " +
+            "WHERE s.enabled = 1 AND (m.genres LIKE '%动漫%' OR m.genres LIKE '%动画%' " +
+            "OR m.genres LIKE '%Animation%') ORDER BY m.addedAt DESC LIMIT :limit"
+    )
+    fun observeAnime(limit: Int): Flow<List<MediaEntity>>
+
+    /** 分类浏览页：按类型/题材分页查询，kind 或 genre 传 null 表示不过滤 */
+    @Query(
+        "SELECT m.* FROM media m JOIN sources s ON m.sourceId = s.id " +
+            "WHERE s.enabled = 1 AND (:kind IS NULL OR m.kind = :kind) " +
+            "AND (:genre IS NULL OR m.genres LIKE '%' || :genre || '%') " +
+            "ORDER BY m.addedAt DESC LIMIT :limit OFFSET :offset"
+    )
+    suspend fun byGenre(kind: String?, genre: String?, limit: Int, offset: Int): List<MediaEntity>
+
+    @Query("SELECT DISTINCT genres FROM media WHERE genres != ''")
+    suspend fun distinctGenres(): List<String>
 }
