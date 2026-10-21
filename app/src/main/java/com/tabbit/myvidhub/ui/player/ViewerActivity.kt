@@ -1,9 +1,11 @@
 package com.tabbit.myvidhub.ui.player
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.net.Uri
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.KeyEvent
@@ -51,7 +53,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
@@ -61,11 +62,9 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import com.tabbit.myvidhub.data.MediaRepository
-import com.tabbit.myvidhub.data.emby.EmbyClient
 import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.data.model.MediaKind
 import com.tabbit.myvidhub.data.model.SourceEntity
-import com.tabbit.myvidhub.data.model.SourceKind
 import com.tabbit.myvidhub.player.PlayerFactory
 import com.tabbit.myvidhub.ui.theme.AppColors
 import com.tabbit.myvidhub.ui.theme.MyVidHubTheme
@@ -73,15 +72,18 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * 播放页（手机 + TV 共用）。
+ * 播放页（手机 + TV 共用），播放内核 Media3/ExoPlayer —— 当前 Android 主流播放器。
  *
- * · 遥控器：左/右 = ±10 秒，确认 = 暂停/播放，返回 = 退出（Media3 原生支持）
- * · 触摸：单击唤出控制条，横向拖动 seek
- * · 结束自动接下一集（同 seriesKey 内 episode+1）
- * · 每 5 秒落一次进度，用于首页「继续观看」
- * · 音轨 / 字幕轨道选择，字幕背景透明度与字号可调（设置持久化）
- * · Emby 源自动挂载服务器端外挂字幕（SRT）
+ * · 遥控器：左/右 = ±10 秒，确认 = 暂停/播放，返回 = 退出
+ * · 触摸：单击唤出控制条（倍速/音轨/字幕/比例/横竖屏按钮随控制条一起显隐）
+ * · 结束自动接下一集；每 5 秒落一次进度
+ * · 音轨 / 字幕轨道选择，字幕背景透明度与字号可调（持久化）
+ * · 比例切换：适应 / 铺满 / 缩放；横竖屏切换
  * · 杜比视界 / 杜比全景声：Emby static 直传原码流，设备硬解 + 音频直通自动生效
+ *
+ * 注意：不主动挂载外挂字幕 —— 盲猜字幕轨 index 会在资源无字幕时触发
+ * HTTP 404，Media3 会抛 ERROR_CODE_IO_BAD_HTTP_STATUS 导致整段播放失败。
+ * 内嵌字幕轨（MKV 封装内）由 ExoPlayer 原生暴露，可直接在「音轨·字幕」中选择。
  */
 @UnstableApi
 class ViewerActivity : ComponentActivity() {
@@ -97,6 +99,9 @@ class ViewerActivity : ComponentActivity() {
     private var titleState by mutableStateOf("")
     private var toastState by mutableStateOf<String?>(null)
     private var speedState by mutableStateOf(1f)
+
+    /** 0=适应 1=铺满 2=缩放 */
+    private var resizeModeState by mutableStateOf(0)
 
     /** 字幕样式：背景不透明度（0~1）与字号（sp），设置持久化 */
     private var subtitleBgAlpha by mutableStateOf(DEFAULT_SUBTITLE_BG_ALPHA)
@@ -138,6 +143,10 @@ class ViewerActivity : ComponentActivity() {
                     },
                     loadTracks = { loadTracks() },
                     onSelectTrack = { selectTrack(it) },
+                    resizeMode = resizeModeState,
+                    onResizeMode = { resizeModeState = it },
+                    isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE,
+                    onToggleOrientation = { toggleOrientation() },
                     onViewCreated = { view ->
                         playerView = view
                         player?.let { view.player = it }
@@ -159,6 +168,15 @@ class ViewerActivity : ComponentActivity() {
             titleState = displayTitle(item)
             startPlayback(item)
         }
+    }
+
+    private fun toggleOrientation() {
+        requestedOrientation =
+            if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            } else {
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            }
     }
 
     private fun applySpeed(speed: Float) {
@@ -213,42 +231,11 @@ class ViewerActivity : ComponentActivity() {
             }
         })
 
-        val mediaItem = buildMediaItem(item)
-        p.setMediaItem(mediaItem)
+        p.setMediaItem(MediaItem.fromUri(item.uri))
         p.prepare()
         if (startPosition > 3_000L) p.seekTo(startPosition)
         p.setPlaybackSpeed(speedState)
         p.playWhenReady = true
-    }
-
-    /**
-     * 构建播放 MediaItem。
-     * Emby 源自动挂载 index 0 的服务器端外挂字幕（SRT），
-     * 若该媒体没有外挂字幕，字幕轨加载失败只是被静默丢弃，不影响播放。
-     */
-    private fun buildMediaItem(item: MediaEntity): MediaItem {
-        val builder = MediaItem.Builder().setUri(Uri.parse(item.uri))
-
-        val src = source
-        if (src?.kind == SourceKind.EMBY &&
-            src.token.isNotBlank() &&
-            item.remoteId.startsWith("emby:")
-        ) {
-            val itemId = item.remoteId.split(":").getOrNull(2)
-            if (!itemId.isNullOrBlank()) {
-                val subtitleUrl = EmbyClient.subtitleUrl(src.location, itemId, 0, src.token)
-                builder.setSubtitleConfigurations(
-                    listOf(
-                        MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitleUrl))
-                            .setMimeType(MimeTypes.APPLICATION_SUBRIP)
-                            .setLanguage("zh")
-                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                            .build()
-                    )
-                )
-            }
-        }
-        return builder.build()
     }
 
     // ---------- 轨道选择 ----------
@@ -317,7 +304,7 @@ class ViewerActivity : ComponentActivity() {
             titleState = displayTitle(next)
 
             player?.let { p ->
-                p.setMediaItem(buildMediaItem(next))
+                p.setMediaItem(MediaItem.fromUri(next.uri))
                 p.prepare()
                 p.setPlaybackSpeed(speedState)
                 p.playWhenReady = true
@@ -418,9 +405,14 @@ private fun PlayerScreen(
     onSubtitleStyle: (bgAlpha: Float, textSize: Float) -> Unit,
     loadTracks: () -> List<TrackOption>,
     onSelectTrack: (TrackOption) -> Unit,
+    resizeMode: Int,
+    onResizeMode: (Int) -> Unit,
+    isLandscape: Boolean,
+    onToggleOrientation: () -> Unit,
     onViewCreated: (PlayerView) -> Unit
 ) {
     var showTitle by remember { mutableStateOf(true) }
+    var controlsVisible by remember { mutableStateOf(false) }
     var showTrackDialog by remember { mutableStateOf(false) }
     var showStyleDialog by remember { mutableStateOf(false) }
 
@@ -437,11 +429,26 @@ private fun PlayerScreen(
                 PlayerView(ctx).apply {
                     useController = true
                     setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT)
                     keepScreenOn = true
                     controllerShowTimeoutMs = 3_500
+                    // 自定义按钮与原生控制条同生命周期：触摸唤出控制条时一起出现
+                    setControllerVisibilityListener(
+                        PlayerView.ControllerVisibilityListener { visibility ->
+                            controlsVisible = visibility == View.VISIBLE
+                        }
+                    )
                     onViewCreated(this)
                 }
+            },
+            update = { view ->
+                view.setResizeMode(
+                    when (resizeMode) {
+                        1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                        2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                        else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
+                )
             }
         )
 
@@ -476,53 +483,53 @@ private fun PlayerScreen(
             }
         }
 
-        Column(
-            Modifier
+        // 自定义控制层：随播放控制条一起显隐
+        AnimatedVisibility(
+            visible = controlsVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(bottom = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // ---------- 倍速 ----------
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                SpeedOptions.forEach { option ->
-                    val selected = kotlin.math.abs(speed - option) < 0.01f
-                    Box(
-                        Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (selected) AppColors.Brand else Color.Black.copy(alpha = 0.5f)
-                            )
-                            .clickable { onSpeed(option) }
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
-                    ) {
-                        Text(
-                            text = formatSpeed(option),
-                            color = if (selected) Color.White else Color.White.copy(alpha = 0.85f),
-                            style = MaterialTheme.typography.labelMedium
-                        )
+                // ---------- 倍速 ----------
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SpeedOptions.forEach { option ->
+                        val selected = kotlin.math.abs(speed - option) < 0.01f
+                        ControlChip(
+                            label = formatSpeed(option),
+                            selected = selected
+                        ) { onSpeed(option) }
                     }
                 }
-            }
 
-            // ---------- 音轨 / 字幕样式入口 ----------
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ControlChip("音轨 · 字幕") { showTrackDialog = true }
-                ControlChip("字幕样式") { showStyleDialog = true }
+                // ---------- 音轨 / 字幕 / 画面 ----------
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ControlChip("音轨 · 字幕") { showTrackDialog = true }
+                    ControlChip("字幕样式") { showStyleDialog = true }
+                    ControlChip(
+                        label = when (resizeMode) {
+                            1 -> "铺满"
+                            2 -> "缩放"
+                            else -> "适应"
+                        }
+                    ) { onResizeMode((resizeMode + 1) % 3) }
+                    ControlChip(if (isLandscape) "小屏" else "全屏") { onToggleOrientation() }
+                }
             }
-
-            Text(
-                "← →  快进 / 快退     确认键  暂停 / 播放     返回键  退出",
-                color = AppColors.TextTertiary.copy(alpha = 0.55f),
-                style = MaterialTheme.typography.labelSmall
-            )
         }
     }
 
@@ -548,17 +555,17 @@ private fun PlayerScreen(
 }
 
 @Composable
-private fun ControlChip(label: String, onClick: () -> Unit) {
+private fun ControlChip(label: String, selected: Boolean = false, onClick: () -> Unit) {
     Box(
         Modifier
             .clip(RoundedCornerShape(6.dp))
-            .background(Color.Black.copy(alpha = 0.5f))
+            .background(if (selected) AppColors.Brand else Color.Black.copy(alpha = 0.5f))
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(
             text = label,
-            color = Color.White.copy(alpha = 0.85f),
+            color = if (selected) Color.White else Color.White.copy(alpha = 0.85f),
             style = MaterialTheme.typography.labelMedium
         )
     }

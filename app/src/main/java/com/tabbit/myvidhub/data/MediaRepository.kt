@@ -66,6 +66,18 @@ class MediaRepository(context: Context) {
     suspend fun byGenre(kind: String?, genre: String?, limit: Int, offset: Int): List<MediaEntity> =
         mediaDao.byGenre(kind, genre, limit, offset)
 
+    /** Emby 刮削信息（导演/演员/分级/工作室），仅 Emby 源可用 */
+    suspend fun embyDetail(sourceId: Long, remoteId: String): EmbyClient.ItemDetail? =
+        withContext(Dispatchers.IO) {
+            val src = sourceDao.get(sourceId) ?: return@withContext null
+            if (src.kind != SourceKind.EMBY || src.token.isBlank()) return@withContext null
+            val itemId = remoteId.removePrefix("emby:${src.id}:")
+            if (itemId.isBlank() || ':' in itemId) return@withContext null
+            runCatching {
+                EmbyClient(src.location, src.token, src.userId).fetchItemDetail(itemId)
+            }.getOrNull()
+        }
+
     /** 类型标签：拆分聚合后按出现次数排序 */
     suspend fun genreTags(limit: Int = 16): List<String> =
         mediaDao.distinctGenres()

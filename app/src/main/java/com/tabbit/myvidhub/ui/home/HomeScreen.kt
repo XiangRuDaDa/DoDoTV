@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -94,7 +95,16 @@ fun HomeScreen(
     }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            // 顶部氛围渐变：让页面不是纯黑底，视觉更丰富
+            .background(
+                Brush.verticalGradient(
+                    0f to AppColors.Brand.copy(alpha = 0.09f),
+                    0.22f to AppColors.Bg,
+                    1f to AppColors.Bg
+                )
+            ),
         contentPadding = PaddingValues(bottom = 28.dp)
     ) {
         // ---------- 顶栏 ----------
@@ -335,7 +345,17 @@ fun GenreScreen(
     }
     val currentTab = tabs.firstOrNull { it.kind == kind && it.genre == genre }
 
-    Column(Modifier.fillMaxSize()) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    0f to AppColors.Brand.copy(alpha = 0.09f),
+                    0.22f to AppColors.Bg,
+                    1f to AppColors.Bg
+                )
+            )
+    ) {
         // ---------- 顶栏 ----------
         Row(
             modifier = Modifier

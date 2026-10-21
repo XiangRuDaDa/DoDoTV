@@ -44,6 +44,17 @@ class EmbyClient(
 
     data class Auth(val userId: String, val token: String, val userName: String)
 
+    /** 刮削详情：导演/演员/工作室/分级/标语（Emby 服务端已刮削好的元数据） */
+    data class ItemDetail(
+        val tagline: String,
+        val officialRating: String,
+        val studios: List<String>,
+        val directors: List<Person>,
+        val actors: List<Person>
+    )
+
+    data class Person(val name: String, val role: String, val imageUrl: String)
+
     data class Item(
         val id: String,
         val name: String,
@@ -221,6 +232,41 @@ class EmbyClient(
         }.getOrNull() ?: return@withContext emptyList()
 
         parseItems(json.optJSONArray("Items"))
+    }
+
+    /** 刮削信息：标语/分级/工作室/导演/演员（详情页展示用） */
+    suspend fun fetchItemDetail(itemId: String): ItemDetail? = withContext(Dispatchers.IO) {
+        val uid = currentUserId() ?: return@withContext null
+        val json = runCatching {
+            getJson("/Users/$uid/Items/$itemId", mapOf("Fields" to "People,Studios,Taglines,OfficialRating"))
+        }.getOrNull() ?: return@withContext null
+
+        val tagline = json.optJSONArray("Taglines")?.optString(0).orEmpty()
+        val officialRating = json.optString("OfficialRating")
+        val studios = json.optJSONArray("Studios")?.let { arr ->
+            (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("Name") }
+        }.orEmpty()
+
+        val directors = mutableListOf<Person>()
+        val actors = mutableListOf<Person>()
+        json.optJSONArray("People")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val p = arr.optJSONObject(i) ?: continue
+                val name = p.optString("Name")
+                if (name.isBlank()) continue
+                val tag = p.optString("PrimaryImageTag")
+                val image = if (tag.isNotBlank()) {
+                    val auth = if (token.isNotBlank()) "&api_key=$token" else ""
+                    "$base/Persons/${Uri.encode(name)}/Images/Primary?tag=$tag&maxHeight=300&quality=90$auth"
+                } else ""
+                val person = Person(name, p.optString("Role"), image)
+                when (p.optString("Type")) {
+                    "Director" -> directors += person
+                    "Actor" -> actors += person
+                }
+            }
+        }
+        ItemDetail(tagline, officialRating, studios, directors.take(3), actors.take(12))
     }
 
     private var cachedUserId: String? = null

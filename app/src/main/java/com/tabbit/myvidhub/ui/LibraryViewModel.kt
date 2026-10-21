@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tabbit.myvidhub.data.MediaRepository
+import com.tabbit.myvidhub.data.emby.EmbyClient
 import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.data.model.MediaKind
 import com.tabbit.myvidhub.data.model.SourceEntity
@@ -233,6 +234,10 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 类型标签（按内容数量排序） */
     suspend fun genreTags(): List<String> = repo.genreTags()
+
+    /** Emby 刮削信息（导演/演员/分级），非 Emby 源返回 null */
+    suspend fun embyDetailOf(sourceId: Long, remoteId: String): EmbyClient.ItemDetail? =
+        repo.embyDetail(sourceId, remoteId)
 
     // ---------- 扫描 ----------
 

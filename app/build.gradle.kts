@@ -95,6 +95,9 @@ dependencies {
     // 海报图
     implementation("io.coil-kt:coil-compose:2.6.0")
 
+    // 海报主色提取（详情页沉浸式渐变背景）
+    implementation("androidx.palette:palette-ktx:1.0.0")
+
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
