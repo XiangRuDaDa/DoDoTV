@@ -8,12 +8,22 @@ android {
     namespace = "com.tabbit.myvidhub"
     compileSdk = 34
 
+    // 固定 debug 签名：确保升级安装不丢数据
+    signingConfigs {
+        create("debugSigning") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.tabbit.myvidhub"
         minSdk = 21
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "2.0"
 
         vectorDrawables { useSupportLibrary = true }
     }
@@ -27,7 +37,8 @@ android {
             )
         }
         debug {
-            applicationIdSuffix = ".debug"
+            // debug 包与 release 同包名，方便覆盖安装测试
+            signingConfig = signingConfigs.getByName("debugSigning")
         }
     }
 

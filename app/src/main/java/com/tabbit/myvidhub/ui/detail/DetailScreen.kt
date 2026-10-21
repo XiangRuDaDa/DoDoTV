@@ -246,9 +246,12 @@ fun DetailScreen(
                                             (state.result.drawable as? BitmapDrawable)
                                                 ?.bitmap?.let { bmp ->
                                                     Palette.from(bmp).generate { palette ->
-                                                        val argb = palette?.getDarkMutedColor(
-                                                            palette.getDarkVibrantColor(Color(0xFF1A1D29).toArgb())
-                                                        )
+                                                        val swatch = palette
+                                                            ?.darkMutedSwatch
+                                                            ?: palette?.darkVibrantSwatch
+                                                            ?: palette?.vibrantSwatch
+                                                            ?: palette?.dominantSwatch
+                                                        val argb = swatch?.rgb
                                                         if (argb != null) dominantColor = Color(argb)
                                                     }
                                                 }

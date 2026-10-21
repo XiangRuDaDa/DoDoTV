@@ -49,6 +49,7 @@ import com.tabbit.myvidhub.ui.home.GenreScreen
 import com.tabbit.myvidhub.ui.home.HomeScreen
 import com.tabbit.myvidhub.ui.home.SearchScreen
 import com.tabbit.myvidhub.ui.player.ViewerActivity
+import com.tabbit.myvidhub.ui.settings.forceTvMode
 import com.tabbit.myvidhub.ui.settings.SettingsScreen
 import com.tabbit.myvidhub.ui.sources.SourcesScreen
 import com.tabbit.myvidhub.ui.theme.AppColors
@@ -93,7 +94,8 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 @Composable
 private fun AppRoot() {
     val context = LocalContext.current
-    val isTv = remember { context.isTelevision() }
+    val forceTv = remember { context.forceTvMode() }
+    val isTv = remember { context.isTelevision() || forceTv }
     val vm: LibraryViewModel = viewModel()
 
     var route by remember { mutableStateOf<Route>(Route.Home) }

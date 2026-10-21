@@ -1,13 +1,11 @@
 package com.tabbit.myvidhub.ui.player
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.os.Bundle
-import android.util.TypedValue
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
@@ -24,22 +22,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.lifecycleScope
@@ -59,31 +52,25 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import com.tabbit.myvidhub.data.MediaRepository
 import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.data.model.MediaKind
-import com.tabbit.myvidhub.data.model.SourceEntity
 import com.tabbit.myvidhub.player.PlayerFactory
 import com.tabbit.myvidhub.ui.theme.AppColors
 import com.tabbit.myvidhub.ui.theme.MyVidHubTheme
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * 播放页（手机 + TV 共用），播放内核 Media3/ExoPlayer —— 当前 Android 主流播放器。
+ * 播放页（VidHub 风格）。
  *
- * · 遥控器：左/右 = ±10 秒，确认 = 暂停/播放，返回 = 退出
- * · 触摸：单击唤出控制条（倍速/音轨/字幕/比例/横竖屏按钮随控制条一起显隐）
- * · 结束自动接下一集；每 5 秒落一次进度
- * · 音轨 / 字幕轨道选择，字幕背景透明度与字号可调（持久化）
- * · 比例切换：适应 / 铺满 / 缩放；横竖屏切换
- * · 杜比视界 / 杜比全景声：Emby static 直传原码流，设备硬解 + 音频直通自动生效
+ * 核心设计：PlayerView 默认控制条负责 seek bar 拖动、播放暂停、快进快退 ——
+ * 这些手势最复杂的控件交给 Media3 原生处理，不再被 Compose Overlay 拦截。
+ * Compose Overlay 只画倍速/字幕/比例/横屏四个按钮，且**随控制条一起显隐**：
+ * 控制条显示时按钮可见，控制条隐藏时按钮也隐藏，避免 seek bar 手势冲突。
  *
- * 注意：不主动挂载外挂字幕 —— 盲猜字幕轨 index 会在资源无字幕时触发
- * HTTP 404，Media3 会抛 ERROR_CODE_IO_BAD_HTTP_STATUS 导致整段播放失败。
- * 内嵌字幕轨（MKV 封装内）由 ExoPlayer 原生暴露，可直接在「音轨·字幕」中选择。
+ * 支持：倍速选择、音轨+字幕轨道选择、字幕背景透明度/字号持久化调节、
+ * 画面比例切换、横竖屏切换、同剧集自动接下一集、继续观看进度保存。
  */
 @UnstableApi
 class ViewerActivity : ComponentActivity() {
@@ -91,7 +78,6 @@ class ViewerActivity : ComponentActivity() {
     private var player: ExoPlayer? = null
     private var playerView: PlayerView? = null
     private var current: MediaEntity? = null
-    private var source: SourceEntity? = null
     private var lastSavedAt = 0L
 
     private lateinit var prefs: SharedPreferences
@@ -103,9 +89,15 @@ class ViewerActivity : ComponentActivity() {
     /** 0=适应 1=铺满 2=缩放 */
     private var resizeModeState by mutableStateOf(0)
 
-    /** 字幕样式：背景不透明度（0~1）与字号（sp），设置持久化 */
+    /** Compose Overlay 按钮随 PlayerView 控制条一起显隐 */
+    private var controlsVisible by mutableStateOf(false)
+
+    /** 字幕样式：背景不透明度与字号 */
     private var subtitleBgAlpha by mutableStateOf(DEFAULT_SUBTITLE_BG_ALPHA)
     private var subtitleTextSize by mutableStateOf(DEFAULT_SUBTITLE_TEXT_SIZE)
+
+    private var showTrackDialog by mutableStateOf(false)
+    private var showSubtitleStyleDialog by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -129,7 +121,10 @@ class ViewerActivity : ComponentActivity() {
                     title = titleState,
                     toast = toastState,
                     speed = speedState,
-                    onSpeed = { applySpeed(it) },
+                    onSpeed = {
+                        speedState = it
+                        player?.setPlaybackSpeed(it)
+                    },
                     subtitleBgAlpha = subtitleBgAlpha,
                     subtitleTextSize = subtitleTextSize,
                     onSubtitleStyle = { bg, size ->
@@ -141,18 +136,58 @@ class ViewerActivity : ComponentActivity() {
                             .putFloat(KEY_SUBTITLE_TEXT_SIZE, size)
                             .apply()
                     },
-                    loadTracks = { loadTracks() },
-                    onSelectTrack = { selectTrack(it) },
+                    controlsVisible = controlsVisible,
                     resizeMode = resizeModeState,
-                    onResizeMode = { resizeModeState = it },
+                    onResizeMode = { mode ->
+                        resizeModeState = mode
+                        playerView?.resizeMode = when (mode) {
+                            1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                            2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                            else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        }
+                    },
                     isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE,
                     onToggleOrientation = { toggleOrientation() },
+                    onShowTrackDialog = { showTrackDialog = true },
+                    onShowSubtitleStyleDialog = { showSubtitleStyleDialog = true },
                     onViewCreated = { view ->
                         playerView = view
                         player?.let { view.player = it }
+                        configurePlayerView(view)
                         applySubtitleStyle()
                     }
                 )
+
+                if (showTrackDialog) {
+                    TrackDialog(
+                        tracks = loadTracks(),
+                        onDismiss = { showTrackDialog = false },
+                        onSelect = {
+                            selectTrack(it)
+                            showTrackDialog = false
+                        },
+                        onStyle = {
+                            showSubtitleStyleDialog = true
+                        }
+                    )
+                }
+
+                if (showSubtitleStyleDialog) {
+                    SubtitleStyleDialog(
+                        bgAlpha = subtitleBgAlpha,
+                        textSize = subtitleTextSize,
+                        onChange = { bg, size ->
+                            subtitleBgAlpha = bg
+                            subtitleTextSize = size
+                            applySubtitleStyle()
+                            prefs.edit()
+                                .putFloat(KEY_SUBTITLE_BG_ALPHA, bg)
+                                .putFloat(KEY_SUBTITLE_TEXT_SIZE, size)
+                                .apply()
+                        },
+                        onDismiss = { showSubtitleStyleDialog = false }
+                    )
+                }
             }
         }
 
@@ -164,43 +199,15 @@ class ViewerActivity : ComponentActivity() {
                 return@launch
             }
             current = item
-            source = runCatching { repo.getSource(item.sourceId) }.getOrNull()
             titleState = displayTitle(item)
             startPlayback(item)
         }
     }
 
-    private fun toggleOrientation() {
-        requestedOrientation =
-            if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            } else {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            }
-    }
-
-    private fun applySpeed(speed: Float) {
-        speedState = speed
-        player?.setPlaybackSpeed(speed)
-    }
-
-    /** 应用字幕外观：背景透明度 + 字号 */
-    private fun applySubtitleStyle() {
-        val sv = playerView?.subtitleView ?: return
-        val bg = android.graphics.Color.argb(
-            (subtitleBgAlpha.coerceIn(0f, 1f) * 255f).toInt(), 0, 0, 0
-        )
-        sv.setStyle(
-            CaptionStyleCompat(
-                android.graphics.Color.WHITE,
-                bg,
-                CaptionStyleCompat.EDGE_TYPE_NONE,
-                bg,
-                android.graphics.Color.TRANSPARENT,
-                null
-            )
-        )
-        sv.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSize)
+    private fun configurePlayerView(view: PlayerView) {
+        view.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
+            controlsVisible = visibility == View.VISIBLE
+        })
     }
 
     private fun displayTitle(item: MediaEntity): String =
@@ -219,7 +226,6 @@ class ViewerActivity : ComponentActivity() {
         val p = PlayerFactory.createPlayer(this)
         player = p
         playerView?.player = p
-        applySubtitleStyle()
 
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
@@ -238,18 +244,42 @@ class ViewerActivity : ComponentActivity() {
         p.playWhenReady = true
     }
 
+    /** 字幕外观：背景不透明度 + 字号 */
+    private fun applySubtitleStyle() {
+        val sv = playerView?.subtitleView ?: return
+        val bg = android.graphics.Color.argb(
+            (subtitleBgAlpha.coerceIn(0f, 1f) * 255f).toInt(), 0, 0, 0
+        )
+        sv.setStyle(
+            androidx.media3.ui.CaptionStyleCompat(
+                android.graphics.Color.WHITE,
+                bg,
+                androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE,
+                bg,
+                android.graphics.Color.TRANSPARENT,
+                null
+            )
+        )
+        sv.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subtitleTextSize)
+    }
+
+    private fun toggleOrientation() {
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        requestedOrientation =
+            if (isLandscape) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    }
+
     // ---------- 轨道选择 ----------
 
-    /** 当前可选的音轨 / 字幕轨 */
     private fun loadTracks(): List<TrackOption> {
         val p = player ?: return emptyList()
         val out = mutableListOf<TrackOption>()
-        val textDisabled = p.trackSelectionParameters
-            .disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)
+        val textDisabled = p.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)
 
-        p.currentTracks.groups.forEach { group ->
+        for (group in p.currentTracks.groups) {
             val type = group.type
-            if (type != C.TRACK_TYPE_AUDIO && type != C.TRACK_TYPE_TEXT) return@forEach
+            if (type != C.TRACK_TYPE_AUDIO && type != C.TRACK_TYPE_TEXT) continue
             for (i in 0 until group.length) {
                 val format = group.getTrackFormat(i)
                 if (type == C.TRACK_TYPE_AUDIO && format.sampleMimeType == null) continue
@@ -257,19 +287,18 @@ class ViewerActivity : ComponentActivity() {
                     when (type) {
                         C.TRACK_TYPE_AUDIO -> {
                             append(format.label ?: format.language ?: "音轨")
-                            format.channelCount.takeIf { it > 0 }?.let { append("  ·  ${it} 声道") }
+                            format.channelCount.takeIf { it > 0 }?.let { append(" · ${it}声道") }
                         }
-                        else -> {
-                            append(format.label ?: format.language ?: "字幕")
-                            format.language?.let { if (format.label != null) append("  ·  $it") }
-                        }
+                        else -> append(format.label ?: format.language ?: "字幕")
                     }
                 }
                 out += TrackOption(label, type, group, i, group.isTrackSelected(i))
             }
         }
         return out + TrackOption(
-            "关闭字幕", C.TRACK_TYPE_TEXT, out.firstOrNull()?.group ?: return out, -1, textDisabled
+            "关闭字幕", C.TRACK_TYPE_TEXT,
+            p.currentTracks.groups.firstOrNull() ?: return out,
+            -1, textDisabled
         )
     }
 
@@ -299,7 +328,6 @@ class ViewerActivity : ComponentActivity() {
                 .minByOrNull { it.episode } ?: return@launch
 
             saveProgress(force = true)
-
             current = next
             titleState = displayTitle(next)
 
@@ -384,7 +412,6 @@ class ViewerActivity : ComponentActivity() {
     }
 }
 
-/** 可选轨道项；trackIndex = -1 表示「关闭字幕」 */
 private data class TrackOption(
     val label: String,
     val type: Int,
@@ -402,25 +429,17 @@ private fun PlayerScreen(
     onSpeed: (Float) -> Unit,
     subtitleBgAlpha: Float,
     subtitleTextSize: Float,
-    onSubtitleStyle: (bgAlpha: Float, textSize: Float) -> Unit,
-    loadTracks: () -> List<TrackOption>,
-    onSelectTrack: (TrackOption) -> Unit,
+    onSubtitleStyle: (Float, Float) -> Unit,
+    controlsVisible: Boolean,
     resizeMode: Int,
     onResizeMode: (Int) -> Unit,
     isLandscape: Boolean,
     onToggleOrientation: () -> Unit,
+    onShowTrackDialog: () -> Unit,
+    onShowSubtitleStyleDialog: () -> Unit,
     onViewCreated: (PlayerView) -> Unit
 ) {
-    var showTitle by remember { mutableStateOf(true) }
-    var controlsVisible by remember { mutableStateOf(false) }
-    var showTrackDialog by remember { mutableStateOf(false) }
-    var showStyleDialog by remember { mutableStateOf(false) }
-
-    LaunchedEffect(title) {
-        showTitle = true
-        delay(3_200)
-        showTitle = false
-    }
+    val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
@@ -432,14 +451,7 @@ private fun PlayerScreen(
                     setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT)
                     keepScreenOn = true
                     controllerShowTimeoutMs = 3_500
-                    // 自定义按钮与原生控制条同生命周期：触摸唤出控制条时一起出现
-                    setControllerVisibilityListener(
-                        PlayerView.ControllerVisibilityListener { visibility ->
-                            controlsVisible = visibility == View.VISIBLE
-                        }
-                    )
-                    onViewCreated(this)
-                }
+                }.also { onViewCreated(it) }
             },
             update = { view ->
                 view.setResizeMode(
@@ -452,14 +464,11 @@ private fun PlayerScreen(
             }
         )
 
-        AnimatedVisibility(
-            visible = showTitle && title.isNotBlank(),
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.align(Alignment.TopStart)
-        ) {
-            Row(
+        // Compose Overlay 只画标题和 toast —— 播放器控件完全交给 PlayerView 默认控制条
+        Box(Modifier.fillMaxSize()) {
+            Box(
                 Modifier
+                    .align(Alignment.TopStart)
                     .padding(20.dp)
                     .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 14.dp, vertical = 9.dp)
@@ -470,20 +479,20 @@ private fun PlayerScreen(
                     style = MaterialTheme.typography.titleMedium
                 )
             }
-        }
 
-        if (!toast.isNullOrBlank()) {
-            Box(
-                Modifier
-                    .align(Alignment.Center)
-                    .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(10.dp))
-                    .padding(horizontal = 18.dp, vertical = 12.dp)
-            ) {
-                Text(toast, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+            if (!toast.isNullOrBlank()) {
+                Box(
+                    Modifier
+                        .align(Alignment.Center)
+                        .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 18.dp, vertical = 12.dp)
+                ) {
+                    Text(toast, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                }
             }
         }
 
-        // 自定义控制层：随播放控制条一起显隐
+        // VidHub 风格：倍速/字幕按钮随控制条一起显隐，画在控制条区域上方
         AnimatedVisibility(
             visible = controlsVisible,
             enter = fadeIn(),
@@ -491,66 +500,36 @@ private fun PlayerScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .padding(bottom = 64.dp) // 避开 PlayerView 默认控制条（通常在底部 ~80dp 区域）
         ) {
             Column(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 12.dp),
+                Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // ---------- 倍速 ----------
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    SpeedOptions.forEach { option ->
-                        val selected = kotlin.math.abs(speed - option) < 0.01f
+                    speeds.forEach { s ->
+                        val selected = kotlin.math.abs(speed - s) < 0.01f
                         ControlChip(
-                            label = formatSpeed(option),
+                            label = if (s == s.toInt().toFloat()) "${s.toInt()}x" else "${s}x",
                             selected = selected
-                        ) { onSpeed(option) }
+                        ) { onSpeed(s) }
                     }
                 }
-
-                // ---------- 音轨 / 字幕 / 画面 ----------
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    ControlChip("音轨 · 字幕") { showTrackDialog = true }
-                    ControlChip("字幕样式") { showStyleDialog = true }
+                    ControlChip("音轨 · 字幕") { onShowTrackDialog() }
                     ControlChip(
-                        label = when (resizeMode) {
-                            1 -> "铺满"
-                            2 -> "缩放"
-                            else -> "适应"
-                        }
+                        label = when (resizeMode) { 1 -> "铺满"; 2 -> "缩放"; else -> "适应" }
                     ) { onResizeMode((resizeMode + 1) % 3) }
                     ControlChip(if (isLandscape) "小屏" else "全屏") { onToggleOrientation() }
                 }
             }
         }
-    }
-
-    if (showTrackDialog) {
-        TrackDialog(
-            tracks = loadTracks(),
-            onDismiss = { showTrackDialog = false },
-            onSelect = {
-                onSelectTrack(it)
-                showTrackDialog = false
-            }
-        )
-    }
-
-    if (showStyleDialog) {
-        SubtitleStyleDialog(
-            bgAlpha = subtitleBgAlpha,
-            textSize = subtitleTextSize,
-            onChange = onSubtitleStyle,
-            onDismiss = { showStyleDialog = false }
-        )
     }
 }
 
@@ -559,28 +538,31 @@ private fun ControlChip(label: String, selected: Boolean = false, onClick: () ->
     Box(
         Modifier
             .clip(RoundedCornerShape(6.dp))
-            .background(if (selected) AppColors.Brand else Color.Black.copy(alpha = 0.5f))
+            .background(
+                if (selected) AppColors.Brand
+                else Color.Black.copy(alpha = 0.55f)
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(
             text = label,
-            color = if (selected) Color.White else Color.White.copy(alpha = 0.85f),
-            style = MaterialTheme.typography.labelMedium
+            color = if (selected) Color.White else Color.White.copy(alpha = 0.9f),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold
         )
     }
 }
 
-/** 音轨与字幕轨选择 */
 @Composable
 private fun TrackDialog(
     tracks: List<TrackOption>,
     onDismiss: () -> Unit,
-    onSelect: (TrackOption) -> Unit
+    onSelect: (TrackOption) -> Unit,
+    onStyle: () -> Unit
 ) {
     val audio = tracks.filter { it.type == C.TRACK_TYPE_AUDIO }
-    val text = tracks.filter { it.type == C.TRACK_TYPE_TEXT && it.trackIndex < 0 } +
-        tracks.filter { it.type == C.TRACK_TYPE_TEXT && it.trackIndex >= 0 }
+    val text = tracks.filter { it.type == C.TRACK_TYPE_TEXT }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -588,34 +570,21 @@ private fun TrackDialog(
         containerColor = AppColors.Surface,
         title = { Text("音轨与字幕", color = AppColors.TextPrimary) },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
+            Column {
                 if (audio.isNotEmpty()) {
-                    DialogSection("音轨")
+                    Text("音轨", color = AppColors.Brand, style = MaterialTheme.typography.titleSmall)
                     audio.forEach { TrackRow(it) { onSelect(it) } }
                 }
                 if (text.isNotEmpty()) {
-                    DialogSection("字幕")
+                    Text("字幕", color = AppColors.Brand, style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(top = 8.dp))
                     text.forEach { TrackRow(it) { onSelect(it) } }
                 }
                 if (tracks.isEmpty()) {
-                    Text(
-                        "未检测到可选轨道",
-                        color = AppColors.TextSecondary,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+                    Text("未检测到可选轨道", color = AppColors.TextSecondary)
                 }
             }
         }
-    )
-}
-
-@Composable
-private fun DialogSection(title: String) {
-    Text(
-        title,
-        color = AppColors.Brand,
-        style = MaterialTheme.typography.titleSmall,
-        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
     )
 }
 
@@ -636,18 +605,11 @@ private fun TrackRow(option: TrackOption, onClick: () -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.weight(1f)
         )
-        if (option.selected) {
-            Icon(
-                Icons.Filled.Check,
-                contentDescription = null,
-                tint = AppColors.Brand,
-                modifier = Modifier.size(18.dp)
-            )
-        }
+        if (option.selected) Text("✓", color = AppColors.Brand,
+            style = MaterialTheme.typography.titleSmall)
     }
 }
 
-/** 字幕样式调节：背景透明度 + 字号，实时生效并持久化 */
 @Composable
 private fun SubtitleStyleDialog(
     bgAlpha: Float,
@@ -655,47 +617,57 @@ private fun SubtitleStyleDialog(
     onChange: (Float, Float) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val bgValues = listOf(0f, 0.15f, 0.35f, 0.55f, 0.8f, 1f)
+    val sizeValues = listOf(12f, 14f, 16f, 18f, 20f, 22f, 26f, 32f)
+
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
         containerColor = AppColors.Surface,
         title = { Text("字幕样式", color = AppColors.TextPrimary) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column {
                 Text(
                     "背景不透明度  ${(bgAlpha * 100).toInt()}%",
                     color = AppColors.TextSecondary,
                     style = MaterialTheme.typography.labelMedium
                 )
-                Slider(
-                    value = bgAlpha,
-                    onValueChange = { onChange(it, textSize) },
-                    valueRange = 0f..1f,
-                    colors = SliderDefaults.colors(
-                        thumbColor = AppColors.Brand,
-                        activeTrackColor = AppColors.Brand
-                    )
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    bgValues.forEach { v ->
+                        val selected = kotlin.math.abs(v - bgAlpha) < 0.05f
+                        Button(
+                            onClick = { onChange(v, textSize) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (selected) AppColors.Brand else AppColors.SurfaceHi,
+                                contentColor = if (selected) Color.White else AppColors.TextSecondary
+                            ),
+                            modifier = Modifier.height(32.dp)
+                        ) { Text("${(v * 100).toInt()}%") }
+                    }
+                }
                 Text(
                     "字号  ${textSize.toInt()} sp",
                     color = AppColors.TextSecondary,
-                    style = MaterialTheme.typography.labelMedium
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(top = 10.dp)
                 )
-                Slider(
-                    value = textSize,
-                    onValueChange = { onChange(bgAlpha, it) },
-                    valueRange = 12f..32f,
-                    colors = SliderDefaults.colors(
-                        thumbColor = AppColors.Brand,
-                        activeTrackColor = AppColors.Brand
-                    )
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    sizeValues.forEach { v ->
+                        val selected = kotlin.math.abs(v - textSize) < 1f
+                        Button(
+                            onClick = { onChange(bgAlpha, v) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (selected) AppColors.Brand else AppColors.SurfaceHi,
+                                contentColor = if (selected) Color.White else AppColors.TextSecondary
+                            ),
+                            modifier = Modifier.height(32.dp)
+                        ) { Text("${v.toInt()}sp") }
+                    }
+                }
             }
         }
     )
 }
-
-private val SpeedOptions = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
-
-private fun formatSpeed(s: Float): String =
-    if (s == s.toInt().toFloat()) "${s.toInt()}x" else "${s}x"
