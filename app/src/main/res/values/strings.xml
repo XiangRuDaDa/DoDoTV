@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">MyVidHub</string>
+    <string name="app_name">DouDouTV</string>
     <string name="tab_home">媒体库</string>
     <string name="tab_sources">来源</string>
     <string name="tab_settings">设置</string>

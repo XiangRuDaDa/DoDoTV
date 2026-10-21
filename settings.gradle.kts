@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MyVidHub"
+rootProject.name = "DouDouTV"
 include(":app")

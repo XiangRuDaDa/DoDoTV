@@ -117,7 +117,7 @@ fun HomeScreen(
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "MyVidHub",
+                        "DouDouTV",
                         style = MaterialTheme.typography.headlineMedium,
                         color = AppColors.TextPrimary,
                         fontWeight = FontWeight.Bold

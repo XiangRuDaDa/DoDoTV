@@ -42,7 +42,7 @@ object PlayerFactory {
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(15_000)
             .setReadTimeoutMs(20_000)
-            .setUserAgent("MyVidHub/1.0 (Android)")
+            .setUserAgent("DouDouTV/2.0 (Android)")
 
         val cached = CacheDataSource.Factory()
             .setCache(cacheInstance(context))

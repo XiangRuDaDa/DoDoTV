@@ -95,7 +95,7 @@ class EmbyClient(
     }
 
     private fun authHeader(): String =
-        "MediaBrowser Client=\"MyVidHub\", Device=\"Android\", DeviceId=\"myvidhub\", " +
+        "MediaBrowser Client=\"DouDouTV\", Device=\"Android\", DeviceId=\"myvidhub\", " +
             "Version=\"1.0.0\", Token=\"$token\""
 
     private fun execute(request: Request): Response =

@@ -100,7 +100,7 @@ fun SettingsScreen(vm: LibraryViewModel) {
         // ---------- 关于 ----------
         SettingCard(title = "关于") {
             Text(
-                "MyVidHub 2.0\n\n" +
+                "DouDouTV 2.0\n\n" +
                     "一个自研的安卓个人媒体中心，手机与电视共用一个安装包。\n\n" +
                     "· 播放内核 Media3 / ExoPlayer，支持 MKV、HEVC、HLS 等主流格式\n" +
                     "· Emby 直连：静态直传原码流，局域网不转码\n" +

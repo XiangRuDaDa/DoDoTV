@@ -1,4 +1,4 @@
-# MyVidHub —— 安卓手机 + TV 双端视频播放器
+# DouDouTV —— 安卓手机 + TV 双端视频播放器
 
 自研的安卓个人影音客户端，**只对接两类来源：Emby 与 TVBox**。
 界面与交互形态参照 VidHub 的成熟做法（沉浸式大图首页、海报墙、剧集详情页、平滑转场），
@@ -94,9 +94,9 @@ MyVidHub/
    git remote add origin https://github.com/<你的用户名>/<仓库名>.git
    git push -u origin main
    ```
-3. 推送后自动触发构建（也可在仓库 **Actions** 页点 `Build APK` → `Run workflow` 手动触发）
-4. 构建完成（绿色 ✓）后，点进这次运行，页面底部 **Artifacts** 下载 `MyVidHub-debug-apk`
-5. 解压得到 `app-debug.apk` → 传到手机 / U 盘拷到电视盒子安装
+3. 推送后自动触发构建（`main`、`master`、`dev` 分支均已配置，也可在仓库 **Actions** 页点 `Build APK` → `Run workflow` 手动触发）
+4. 构建完成（绿色 ✓）后，在仓库 **Releases** 页下载 `DouDouTV-v2.0-<分支>.apk`
+5. 下载到的就是原始 APK 文件，无需解压 → 传到手机 / U 盘拷到电视盒子安装
 
 CI 已固定 JDK 11、Gradle 7.5、AGP 7.4.2、SDK Platform 34 与 Build-Tools 34.0.0，
 直接复用 ubuntu-latest 预装的 Android SDK，不额外安装 cmdline-tools，
