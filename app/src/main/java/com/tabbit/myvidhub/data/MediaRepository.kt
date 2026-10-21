@@ -52,6 +52,30 @@ class MediaRepository(context: Context) {
     suspend fun byRemoteId(remoteId: String): MediaEntity? = mediaDao.byRemoteId(remoteId)
     suspend fun episodes(seriesKey: String): List<MediaEntity> = mediaDao.episodes(seriesKey)
     suspend fun seasons(seriesKey: String): List<Int> = mediaDao.seasons(seriesKey)
+    suspend fun hasAnyMedia(): Boolean = mediaDao.countAll() > 0
+
+    /**
+     * 按 remoteId 写入元数据。
+     * 已存在时保留 id / 播放进度 / 收藏 / 添加时间，只刷新标题、海报与播放地址。
+     * 不能用 upsert(REPLACE)：那会删行重插，进度和收藏都会丢。
+     */
+    private suspend fun saveMedia(entity: MediaEntity) {
+        val existing = mediaDao.byRemoteId(entity.remoteId)
+        if (existing == null) {
+            mediaDao.insert(entity)
+        } else {
+            mediaDao.update(
+                entity.copy(
+                    id = existing.id,
+                    positionMs = existing.positionMs,
+                    lastPlayedAt = existing.lastPlayedAt,
+                    favorite = existing.favorite,
+                    addedAt = existing.addedAt,
+                    durationMs = if (entity.durationMs > 0) entity.durationMs else existing.durationMs
+                )
+            )
+        }
+    }
 
     // ---------------- Emby ----------------
 
@@ -60,21 +84,28 @@ class MediaRepository(context: Context) {
      * @return null 表示成功，否则返回错误信息
      */
     suspend fun embyLogin(source: SourceEntity): String? = withContext(Dispatchers.IO) {
-        val client = EmbyClient(source.location)
-        val auth = client.authenticate(source.username, source.password)
-            ?: return@withContext "登录失败：请检查服务器地址、用户名或密码"
-
-        sourceDao.update(
-            source.copy(token = auth.token, userId = auth.userId)
-        )
-        null
+        try {
+            val client = EmbyClient(source.location)
+            val auth = client.authenticate(source.username, source.password)
+            sourceDao.update(
+                source.copy(token = auth.token, userId = auth.userId)
+            )
+            null
+        } catch (e: Exception) {
+            e.message ?: "登录失败：请检查服务器地址、用户名或密码"
+        }
     }
 
     /** 同步 Emby 媒体库 */
     suspend fun syncEmby(source: SourceEntity, onProgress: (Int) -> Unit = {}): Int =
         withContext(Dispatchers.IO) {
-            val token = source.token.ifBlank { return@withContext 0 }
-            val client = EmbyClient(source.location, token)
+            if (source.token.isBlank()) {
+                throw IllegalStateException("Emby 尚未登录，请先点刷新重新登录")
+            }
+            val client = EmbyClient(source.location, source.token, source.userId)
+
+            // 旧版本剧集壳的 remoteId 没带 sourceId，会与新数据重复，先清掉
+            mediaDao.deleteLegacyEmbyShells(source.id)
 
             val items = client.fetchLibrary()
             if (items.isEmpty()) return@withContext 0
@@ -82,12 +113,13 @@ class MediaRepository(context: Context) {
             var count = 0
 
             for (item in items) {
+                // 统一加上 sourceId：多台 Emby 时不会因 itemId 相同而互相覆盖
+                val seriesKey = "emby:${source.id}:${item.id}"
                 if (item.isSeries) {
-                    val seriesKey = "emby:${source.id}:${item.id}"
                     val shell = MediaEntity(
                         sourceId = source.id,
                         uri = "",
-                        remoteId = "emby:${item.id}",
+                        remoteId = seriesKey,
                         seriesKey = seriesKey,
                         title = item.name,
                         kind = MediaKind.SERIES,
@@ -98,18 +130,17 @@ class MediaRepository(context: Context) {
                         rating = item.rating,
                         genres = item.genres
                     )
-                    mediaDao.upsert(shell)
+                    saveMedia(shell)
                     count++
 
-                    // 拉分集
+                    // 拉分集；重新登录后 token 变化，会顺带刷新旧播放地址
                     val episodes = client.fetchEpisodes(item.id)
                     for (ep in episodes) {
-                        val epKey = "emby:${source.id}:${ep.id}"
-                        mediaDao.insert(
+                        saveMedia(
                             MediaEntity(
                                 sourceId = source.id,
-                                uri = EmbyClient.playbackUrl(source.location, ep.id, token),
-                                remoteId = epKey,
+                                uri = EmbyClient.playbackUrl(source.location, ep.id, source.token),
+                                remoteId = "emby:${source.id}:${ep.id}",
                                 seriesKey = seriesKey,
                                 title = ep.name,
                                 kind = MediaKind.EPISODE,
@@ -124,12 +155,11 @@ class MediaRepository(context: Context) {
                     }
                     onProgress(count)
                 } else {
-                    val key = "emby:${source.id}:${item.id}"
-                    mediaDao.insert(
+                    saveMedia(
                         MediaEntity(
                             sourceId = source.id,
-                            uri = EmbyClient.playbackUrl(source.location, item.id, token),
-                            remoteId = key,
+                            uri = EmbyClient.playbackUrl(source.location, item.id, source.token),
+                            remoteId = seriesKey,
                             seriesKey = "",
                             title = item.name,
                             kind = MediaKind.MOVIE,
@@ -156,19 +186,19 @@ class MediaRepository(context: Context) {
         withContext(Dispatchers.IO) {
             val client = TvBoxClient(source.location)
             val list = client.homeContent()
-            if (list.isEmpty()) return@withContext 0
+            if (list.isEmpty()) {
+                throw IllegalStateException("接口未返回任何影片，请确认地址能返回 ac=videolist 的 JSON")
+            }
 
             var count = 0
             for (vod in list) {
-                val key = "tvbox:${source.id}:${vod.vodId}"
-                val seriesKey = "tvbox:${source.id}:${vod.vodId}"
-
-                mediaDao.insert(
+                val key = tvboxKey(source.id, vod.siteKey, vod.vodId)
+                saveMedia(
                     MediaEntity(
                         sourceId = source.id,
                         uri = "",
                         remoteId = key,
-                        seriesKey = seriesKey,
+                        seriesKey = key,
                         title = vod.name,
                         kind = MediaKind.SERIES,
                         year = vod.year,
@@ -193,21 +223,22 @@ class MediaRepository(context: Context) {
         source: SourceEntity,
         remoteId: String
     ): List<TvBoxClient.PlaySource> = withContext(Dispatchers.IO) {
-        val vodId = remoteId.substringAfterLast(':')
+        val (siteKey, vodId) = parseTvBoxKey(source.id, remoteId)
         val client = TvBoxClient(source.location)
-        val detail = client.detail(vodId) ?: return@withContext emptyList()
+        val detail = client.detail(vodId, siteKey) ?: return@withContext emptyList()
 
-        val seriesKey = "tvbox:${source.id}:$vodId"
+        val shell = mediaDao.byRemoteId(remoteId)
+        val seriesKey = shell?.seriesKey?.takeIf { it.isNotBlank() } ?: remoteId
 
         // 用详情补全海报与简介
-        mediaDao.byRemoteId(remoteId)?.let { shell ->
+        shell?.let {
             mediaDao.update(
-                shell.copy(
-                    overview = detail.content.ifBlank { shell.overview },
-                    posterUrl = detail.pic.ifBlank { shell.posterUrl },
-                    backdropUrl = detail.pic.ifBlank { shell.backdropUrl },
-                    rating = if (detail.score > 0) detail.score else shell.rating,
-                    year = if (detail.year > 0) detail.year else shell.year
+                it.copy(
+                    overview = detail.content.ifBlank { it.overview },
+                    posterUrl = detail.pic.ifBlank { it.posterUrl },
+                    backdropUrl = detail.pic.ifBlank { it.backdropUrl },
+                    rating = if (detail.score > 0) detail.score else it.rating,
+                    year = if (detail.year > 0) detail.year else it.year
                 )
             )
         }
@@ -216,12 +247,11 @@ class MediaRepository(context: Context) {
         val primary = detail.playSources.firstOrNull() ?: return@withContext detail.playSources
 
         primary.episodes.forEachIndexed { index, ep ->
-            val epRemote = "tvbox:${source.id}:$vodId:$index"
-            mediaDao.insert(
+            saveMedia(
                 MediaEntity(
                     sourceId = source.id,
                     uri = ep.url,
-                    remoteId = epRemote,
+                    remoteId = "$remoteId:$index",
                     seriesKey = seriesKey,
                     title = ep.name,
                     kind = MediaKind.EPISODE,
@@ -235,6 +265,16 @@ class MediaRepository(context: Context) {
         }
 
         detail.playSources
+    }
+
+    /** TVBox 条目唯一键：配置型源可能含多个站点，用 siteKey 区分 */
+    private fun tvboxKey(sourceId: Long, siteKey: String, vodId: String): String =
+        if (siteKey.isBlank()) "tvbox:$sourceId:$vodId" else "tvbox:$sourceId:$siteKey:$vodId"
+
+    private fun parseTvBoxKey(sourceId: Long, remoteId: String): Pair<String, String> {
+        val rest = remoteId.removePrefix("tvbox:$sourceId:")
+        val idx = rest.lastIndexOf(':')
+        return if (idx > 0) rest.substring(0, idx) to rest.substring(idx + 1) else "" to rest
     }
 
     // ---------------- 进度 ----------------

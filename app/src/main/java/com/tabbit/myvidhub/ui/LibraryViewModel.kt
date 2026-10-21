@@ -43,6 +43,17 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     var message by mutableStateOf<String?>(null)
 
+    init {
+        // 冷启动时若已配置来源但本地还没有内容，自动同步一次，避免用户以为"加完就坏了"
+        viewModelScope.launch {
+            runCatching {
+                if (repo.enabledSources().isNotEmpty() && !repo.hasAnyMedia()) {
+                    scanAll()
+                }
+            }
+        }
+    }
+
     // ---------- 来源管理 ----------
 
     fun addSource(
@@ -122,8 +133,20 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun normalizeLocation(kind: SourceKind, location: String): String =
-        location.trim().let { if (kind == SourceKind.EMBY) it.trimEnd('/') else it }
+    private fun normalizeLocation(kind: SourceKind, location: String): String {
+        var url = location.trim()
+        if (url.isBlank()) return url
+        // 用户常常只填 192.168.1.2:8096 或 example.com/api.php/provide/vod/
+        // 不补协议时 OkHttp 会直接解析失败，导致同步静默返回空
+        if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) {
+            url = "http://$url"
+        }
+        if (kind == SourceKind.EMBY) {
+            // 从浏览器地址栏复制来的常带 /web/index.html，这里裁回服务器根地址
+            url = url.substringBefore("/web/", url).substringBefore("/web", url).trimEnd('/')
+        }
+        return url
+    }
 
     /** 新增/编辑完成后自动同步该来源，解决“添加后首页无数据” */
     private suspend fun syncAfterChange(source: SourceEntity, label: String, action: String) {
@@ -153,13 +176,26 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 强制重新登录 Emby（token 过期时用） */
+    /** 强制重新登录 Emby（token 过期时用），成功后立即重新同步以刷新播放直链 */
     fun reloginEmby(source: SourceEntity) {
         viewModelScope.launch {
             scanning = true
             val error = repo.embyLogin(source)
-            message = error ?: "已重新登录：${source.name}"
-            scanning = false
+            if (error != null) {
+                message = error
+                scanning = false
+                return@launch
+            }
+            val refreshed = repo.getSource(source.id) ?: source
+            message = try {
+                val count = runSync(refreshed)
+                "已重新登录：${source.name}，同步 $count 个条目"
+            } catch (e: Exception) {
+                "已重新登录，但同步失败：${e.message ?: "网络或接口异常"}"
+            } finally {
+                scanning = false
+                scanMessage = ""
+            }
         }
     }
 
@@ -188,14 +224,28 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             scanning = true
             scanMessage = "准备同步…"
             var total = 0
+            val errors = mutableListOf<String>()
             try {
-                for (src in repo.enabledSources()) {
-                    scanMessage = "正在同步 ${src.name}…"
-                    total += runSync(src)
+                val enabled = repo.enabledSources()
+                if (enabled.isEmpty()) {
+                    message = "还没有可用的来源，请先添加"
+                    return@launch
                 }
-                message = if (total > 0) "同步完成，共 $total 个条目" else "没有获取到内容"
-            } catch (e: Exception) {
-                message = "同步失败：${e.message ?: "网络或接口异常"}"
+                for (src in enabled) {
+                    scanMessage = "正在同步 ${src.name}…"
+                    // 单个来源失败不能中断其他来源的同步
+                    try {
+                        total += runSync(src)
+                    } catch (e: Exception) {
+                        errors += "${src.name}：${e.message ?: "网络或接口异常"}"
+                    }
+                }
+                message = when {
+                    total > 0 && errors.isEmpty() -> "同步完成，共 $total 个条目"
+                    total > 0 -> "同步完成，共 $total 个条目；部分来源失败：${errors.joinToString("；")}"
+                    errors.isNotEmpty() -> "同步失败：${errors.joinToString("；")}"
+                    else -> "没有获取到内容"
+                }
             } finally {
                 scanning = false
                 scanMessage = ""
@@ -224,7 +274,12 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     /** TVBox 详情按需拉取分集 */
     suspend fun loadTvBoxDetail(sourceId: Long, remoteId: String): List<TvBoxClient.PlaySource> {
         val src = repo.getSource(sourceId) ?: return emptyList()
-        return runCatching { repo.loadTvBoxDetail(src, remoteId) }.getOrDefault(emptyList())
+        return try {
+            repo.loadTvBoxDetail(src, remoteId)
+        } catch (e: Exception) {
+            message = "获取详情失败：${e.message ?: "网络或接口异常"}"
+            emptyList()
+        }
     }
 
     suspend fun episodesOf(seriesKey: String): List<MediaEntity> = repo.episodes(seriesKey)

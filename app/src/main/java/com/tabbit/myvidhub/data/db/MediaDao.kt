@@ -86,6 +86,16 @@ interface MediaDao {
     @Query("DELETE FROM media WHERE sourceId = :sourceId")
     suspend fun deleteBySource(sourceId: Long)
 
+    /** 清理旧版本遗留的 Emby 剧集壳（remoteId 未带 sourceId 的那批） */
+    @Query(
+        "DELETE FROM media WHERE sourceId = :sourceId AND remoteId LIKE 'emby:%' " +
+            "AND remoteId NOT LIKE 'emby:' || :sourceId || ':%'"
+    )
+    suspend fun deleteLegacyEmbyShells(sourceId: Long)
+
     @Query("SELECT COUNT(*) FROM media WHERE sourceId = :sourceId")
     suspend fun countBySource(sourceId: Long): Int
+
+    @Query("SELECT COUNT(*) FROM media")
+    suspend fun countAll(): Int
 }
