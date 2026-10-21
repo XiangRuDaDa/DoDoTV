@@ -7,13 +7,14 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,7 +24,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -34,7 +38,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,24 +56,30 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.tabbit.myvidhub.R
 import com.tabbit.myvidhub.data.MediaRepository
 import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.data.model.MediaKind
 import com.tabbit.myvidhub.player.PlayerFactory
 import com.tabbit.myvidhub.ui.theme.AppColors
 import com.tabbit.myvidhub.ui.theme.MyVidHubTheme
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 /**
  * 播放页（VidHub 风格）。
  *
- * 核心设计：PlayerView 默认控制条负责 seek bar 拖动、播放暂停、快进快退 ——
- * 这些手势最复杂的控件交给 Media3 原生处理，不再被 Compose Overlay 拦截。
- * Compose Overlay 只画倍速/字幕/比例/横屏四个按钮，且**随控制条一起显隐**：
- * 控制条显示时按钮可见，控制条隐藏时按钮也隐藏，避免 seek bar 手势冲突。
+ * 控制条不再由 Compose 浮层绘制，而是通过 [PlayerView] 的 controller_layout_id
+ * 直接挂在播放器本体里（[R.layout.doudou_player_controller]）：
+ * 播放/暂停、快退快进、seek bar、倍速、字幕、画面比例、上下集、选集
+ * 全部是同一个控制条内的按钮，随控制条一起显隐，手机触摸与遥控器都能用。
  *
- * 支持：倍速选择、音轨+字幕轨道选择、字幕背景透明度/字号持久化调节、
- * 画面比例切换、横竖屏切换、同剧集自动接下一集、继续观看进度保存。
+ * 手势：左右滑动快进/快退（带目标时间预览）；遥控器左右键在控制条隐藏时快进/快退。
+ *
+ * 支持：倍速、音轨/字幕轨道选择、字幕背景透明度与字号、画面比例、
+ * 横竖屏切换、同剧集自动连播、选集、继续观看进度保存。
  */
 @UnstableApi
 class ViewerActivity : ComponentActivity() {
@@ -84,20 +93,33 @@ class ViewerActivity : ComponentActivity() {
 
     private var titleState by mutableStateOf("")
     private var toastState by mutableStateOf<String?>(null)
+
+    /** 拖动进度时的目标时间提示（只是提示，不是控制条） */
+    private var seekPreview by mutableStateOf<String?>(null)
+    private var seekPreviewJob: Job? = null
+
     private var speedState by mutableStateOf(1f)
 
     /** 0=适应 1=铺满 2=缩放 */
     private var resizeModeState by mutableStateOf(0)
 
-    /** Compose Overlay 按钮随 PlayerView 控制条一起显隐 */
-    private var controlsVisible by mutableStateOf(false)
-
-    /** 字幕样式：背景不透明度与字号 */
     private var subtitleBgAlpha by mutableStateOf(DEFAULT_SUBTITLE_BG_ALPHA)
     private var subtitleTextSize by mutableStateOf(DEFAULT_SUBTITLE_TEXT_SIZE)
 
     private var showTrackDialog by mutableStateOf(false)
     private var showSubtitleStyleDialog by mutableStateOf(false)
+    private var showEpisodeDialog by mutableStateOf(false)
+
+    /** 当前剧集的全部分集，用于选集/上下集 */
+    private var episodeList by mutableStateOf<List<MediaEntity>>(emptyList())
+
+    private var titleView: TextView? = null
+    private var speedView: TextView? = null
+    private var aspectView: TextView? = null
+    private var orientationView: TextView? = null
+    private var prevEpisodeView: TextView? = null
+    private var nextEpisodeView: TextView? = null
+    private var episodesView: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -118,43 +140,23 @@ class ViewerActivity : ComponentActivity() {
         setContent {
             MyVidHubTheme {
                 PlayerScreen(
-                    title = titleState,
                     toast = toastState,
-                    speed = speedState,
-                    onSpeed = {
-                        speedState = it
-                        player?.setPlaybackSpeed(it)
-                    },
-                    subtitleBgAlpha = subtitleBgAlpha,
-                    subtitleTextSize = subtitleTextSize,
-                    onSubtitleStyle = { bg, size ->
-                        subtitleBgAlpha = bg
-                        subtitleTextSize = size
-                        applySubtitleStyle()
-                        prefs.edit()
-                            .putFloat(KEY_SUBTITLE_BG_ALPHA, bg)
-                            .putFloat(KEY_SUBTITLE_TEXT_SIZE, size)
-                            .apply()
-                    },
-                    controlsVisible = controlsVisible,
-                    resizeMode = resizeModeState,
-                    onResizeMode = { mode ->
-                        resizeModeState = mode
-                        playerView?.resizeMode = when (mode) {
-                            1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                            2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                            else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        }
-                    },
-                    isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE,
-                    onToggleOrientation = { toggleOrientation() },
-                    onShowTrackDialog = { showTrackDialog = true },
-                    onShowSubtitleStyleDialog = { showSubtitleStyleDialog = true },
-                    onViewCreated = { view ->
+                    seekPreview = seekPreview,
+                    onViewCreated = { view, _ ->
                         playerView = view
                         player?.let { view.player = it }
-                        configurePlayerView(view)
+                        bindController(view)
+                        setupTouchSeek(view)
                         applySubtitleStyle()
+                    },
+                    updateResizeMode = { view ->
+                        view.setResizeMode(
+                            when (resizeModeState) {
+                                1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                                2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                                else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            }
+                        )
                     }
                 )
 
@@ -167,6 +169,7 @@ class ViewerActivity : ComponentActivity() {
                             showTrackDialog = false
                         },
                         onStyle = {
+                            showTrackDialog = false
                             showSubtitleStyleDialog = true
                         }
                     )
@@ -188,6 +191,18 @@ class ViewerActivity : ComponentActivity() {
                         onDismiss = { showSubtitleStyleDialog = false }
                     )
                 }
+
+                if (showEpisodeDialog) {
+                    EpisodeDialog(
+                        episodes = episodeList,
+                        current = current,
+                        onDismiss = { showEpisodeDialog = false },
+                        onSelect = {
+                            showEpisodeDialog = false
+                            playEpisode(it)
+                        }
+                    )
+                }
             }
         }
 
@@ -201,13 +216,127 @@ class ViewerActivity : ComponentActivity() {
             current = item
             titleState = displayTitle(item)
             startPlayback(item)
+            loadEpisodes(item)
         }
     }
 
-    private fun configurePlayerView(view: PlayerView) {
-        view.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
-            controlsVisible = visibility == View.VISIBLE
-        })
+    /**
+     * 绑定播放器内置控制条上的自定义按钮。
+     * 播放/暂停、快退快进、seek bar 由 Media3 自己处理；
+     * 这里只处理倍速、字幕、比例、上下集、选集这些额外功能。
+     */
+    private fun bindController(view: PlayerView) {
+        titleView = view.findViewById(R.id.doudou_title)
+        speedView = view.findViewById(R.id.doudou_speed)
+        aspectView = view.findViewById(R.id.doudou_aspect)
+        orientationView = view.findViewById(R.id.doudou_orientation)
+        prevEpisodeView = view.findViewById(R.id.doudou_prev_episode)
+        nextEpisodeView = view.findViewById(R.id.doudou_next_episode)
+        episodesView = view.findViewById(R.id.doudou_episodes)
+
+        titleView?.text = titleState
+        speedView?.text = formatSpeed(speedState)
+        aspectView?.text = aspectLabel()
+        orientationView?.text = orientationLabel()
+
+        view.findViewById<View>(R.id.doudou_back).setOnClickListener { finish() }
+        speedView?.setOnClickListener { cycleSpeed() }
+        aspectView?.setOnClickListener { cycleAspect() }
+        orientationView?.setOnClickListener { toggleOrientation() }
+        view.findViewById<View>(R.id.doudou_tracks).setOnClickListener {
+            showTrackDialog = true
+        }
+        prevEpisodeView?.setOnClickListener { playPrevious() }
+        nextEpisodeView?.setOnClickListener { playNext() }
+        episodesView?.setOnClickListener {
+            if (episodeList.isNotEmpty()) showEpisodeDialog = true
+        }
+
+        // 快退 10 秒 / 快进 30 秒（覆盖 Media3 默认的 5 秒）
+        view.findViewById<View>(androidx.media3.ui.R.id.exo_rew)?.setOnClickListener {
+            seekBy(-10_000L)
+        }
+        view.findViewById<View>(androidx.media3.ui.R.id.exo_ffwd)?.setOnClickListener {
+            seekBy(30_000L)
+        }
+
+        // 遥控器：控制条显示后不要过快自动隐藏，方便选择上下集
+        view.controllerShowTimeoutMs = 5_000
+        updateEpisodeButtons()
+    }
+
+    /** 左右滑动快进/快退：方向以手指水平位移为准 */
+    private fun setupTouchSeek(view: PlayerView) {
+        val slop = ViewConfiguration.get(this).scaledTouchSlop
+        var downX = 0f
+        var downY = 0f
+        var startPos = 0L
+        var targetPos = 0L
+        var seeking = false
+
+        view.setOnTouchListener { v, event ->
+            val p = player ?: return@setOnTouchListener false
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.x
+                    downY = event.y
+                    startPos = p.currentPosition
+                    targetPos = startPos
+                    seeking = false
+                    false
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.x - downX
+                    val dy = event.y - downY
+                    val duration = p.duration
+                    if (!seeking &&
+                        abs(dx) > slop && abs(dx) > abs(dy) * 1.4f && duration > 0
+                    ) {
+                        seeking = true
+                    }
+                    if (seeking) {
+                        // 滑过整个屏幕宽度 ≈ 视频总时长的 1.5 倍
+                        val span = (duration * 1.5f * (dx / v.width.coerceAtLeast(1)))
+                        targetPos = (startPos + span.toLong()).coerceIn(0L, duration)
+                        showSeekPreview("${fmtTime(targetPos)} / ${fmtTime(duration)}")
+                        true
+                    } else {
+                        false
+                    }
+                }
+
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (seeking) {
+                        p.seekTo(targetPos)
+                        showSeekPreview("${fmtTime(targetPos)} / ${fmtTime(p.duration)}")
+                        seeking = false
+                        true
+                    } else {
+                        false
+                    }
+                }
+
+                else -> false
+            }
+        }
+    }
+
+    private fun showSeekPreview(text: String) {
+        seekPreview = text
+        seekPreviewJob?.cancel()
+        seekPreviewJob = lifecycleScope.launch {
+            delay(900)
+            seekPreview = null
+        }
+    }
+
+    private fun seekBy(deltaMs: Long) {
+        val p = player ?: return
+        val duration = p.duration.takeIf { it > 0 } ?: return
+        val target = (p.currentPosition + deltaMs).coerceIn(0L, duration)
+        p.seekTo(target)
+        showSeekPreview("${fmtTime(target)} / ${fmtTime(duration)}")
     }
 
     private fun displayTitle(item: MediaEntity): String =
@@ -244,6 +373,104 @@ class ViewerActivity : ComponentActivity() {
         p.playWhenReady = true
     }
 
+    private fun loadEpisodes(item: MediaEntity) {
+        if (item.kind != MediaKind.EPISODE || item.seriesKey.isBlank()) {
+            episodeList = emptyList()
+            updateEpisodeButtons()
+            return
+        }
+        lifecycleScope.launch {
+            val list = runCatching {
+                MediaRepository(this@ViewerActivity).episodes(item.seriesKey)
+            }.getOrDefault(emptyList())
+                .filter { it.uri.isNotBlank() }
+                .sortedBy { it.episode }
+            episodeList = list
+            updateEpisodeButtons()
+        }
+    }
+
+    private fun updateEpisodeButtons() {
+        val visible = current?.kind == MediaKind.EPISODE && episodeList.size > 1
+        val visibility = if (visible) View.VISIBLE else View.GONE
+        prevEpisodeView?.visibility = visibility
+        nextEpisodeView?.visibility = visibility
+        episodesView?.visibility = visibility
+
+        val index = episodeIndex()
+        prevEpisodeView?.isEnabled = index > 0
+        prevEpisodeView?.alpha = if (index > 0) 1f else 0.4f
+        nextEpisodeView?.isEnabled = index >= 0 && index < episodeList.size - 1
+        nextEpisodeView?.alpha = if (index >= 0 && index < episodeList.size - 1) 1f else 0.4f
+    }
+
+    private fun episodeIndex(): Int {
+        val cur = current ?: return -1
+        return episodeList.indexOfFirst { it.id == cur.id }
+    }
+
+    private fun playEpisode(episode: MediaEntity) {
+        if (episode.uri.isBlank()) return
+        val p = player ?: return
+        saveProgress(force = true)
+
+        current = episode
+        titleState = displayTitle(episode)
+        titleView?.text = titleState
+        updateEpisodeButtons()
+
+        p.setMediaItem(MediaItem.fromUri(episode.uri))
+        p.prepare()
+        if (episode.positionMs > 3_000L) p.seekTo(episode.positionMs)
+        p.setPlaybackSpeed(speedState)
+        p.playWhenReady = true
+    }
+
+    private fun playNext() {
+        val index = episodeIndex()
+        val next = episodeList.getOrNull(index + 1) ?: return
+        if (next.id == current?.id) return
+        playEpisode(next)
+    }
+
+    private fun playPrevious() {
+        val index = episodeIndex()
+        val prev = episodeList.getOrNull(index - 1) ?: return
+        if (prev.id == current?.id) return
+        playEpisode(prev)
+    }
+
+    private fun cycleSpeed() {
+        val next = SPEEDS[(SPEEDS.indexOfFirst { abs(it - speedState) < 0.01f } + 1) % SPEEDS.size]
+        speedState = next
+        player?.setPlaybackSpeed(next)
+        speedView?.text = formatSpeed(next)
+    }
+
+    private fun cycleAspect() {
+        resizeModeState = (resizeModeState + 1) % 3
+        playerView?.setResizeMode(
+            when (resizeModeState) {
+                1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+            }
+        )
+        aspectView?.text = aspectLabel()
+    }
+
+    private fun aspectLabel(): String = when (resizeModeState) {
+        1 -> "铺满"
+        2 -> "缩放"
+        else -> "适应"
+    }
+
+    private fun orientationLabel(): String =
+        if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) "小屏" else "全屏"
+
+    private fun formatSpeed(speed: Float): String =
+        if (speed == speed.toInt().toFloat()) "${speed.toInt()}.0x" else "${speed}x"
+
     /** 字幕外观：背景不透明度 + 字号 */
     private fun applySubtitleStyle() {
         val sv = playerView?.subtitleView ?: return
@@ -268,6 +495,11 @@ class ViewerActivity : ComponentActivity() {
         requestedOrientation =
             if (isLandscape) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        orientationView?.text = orientationLabel()
     }
 
     // ---------- 轨道选择 ----------
@@ -316,30 +548,6 @@ class ViewerActivity : ComponentActivity() {
         p.trackSelectionParameters = builder.build()
     }
 
-    /** 同剧集内接下一集 */
-    private fun playNext() {
-        val cur = current ?: return
-        if (cur.kind != MediaKind.EPISODE || cur.seriesKey.isBlank()) return
-
-        lifecycleScope.launch {
-            val repo = MediaRepository(this@ViewerActivity)
-            val next = repo.episodes(cur.seriesKey)
-                .filter { it.episode > cur.episode && it.uri.isNotBlank() }
-                .minByOrNull { it.episode } ?: return@launch
-
-            saveProgress(force = true)
-            current = next
-            titleState = displayTitle(next)
-
-            player?.let { p ->
-                p.setMediaItem(MediaItem.fromUri(next.uri))
-                p.prepare()
-                p.setPlaybackSpeed(speedState)
-                p.playWhenReady = true
-            }
-        }
-    }
-
     private fun saveProgress(force: Boolean = false) {
         val item = current ?: return
         val p = player ?: return
@@ -382,19 +590,23 @@ class ViewerActivity : ComponentActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        val controllerVisible = playerView?.isControllerFullyVisible == true
         when (keyCode) {
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
                 player?.let { if (it.isPlaying) it.pause() else it.play() }
                 return true
             }
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                player?.let { it.seekTo(it.currentPosition + 30_000L) }
+                seekBy(30_000L)
                 return true
             }
             KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                player?.let { it.seekTo((it.currentPosition - 30_000L).coerceAtLeast(0L)) }
+                seekBy(-10_000L)
                 return true
             }
+            // 控制条隐藏时，遥控器左右键直接快退/快进；显示时交给控制条做焦点移动
+            KeyEvent.KEYCODE_DPAD_LEFT -> if (!controllerVisible) { seekBy(-10_000L); return true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> if (!controllerVisible) { seekBy(30_000L); return true }
         }
         return super.onKeyDown(keyCode, event)
     }
@@ -407,9 +619,19 @@ class ViewerActivity : ComponentActivity() {
         private const val DEFAULT_SUBTITLE_BG_ALPHA = 0.35f
         private const val DEFAULT_SUBTITLE_TEXT_SIZE = 18f
 
+        private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+
         fun intent(context: Context, mediaId: Long): Intent =
             Intent(context, ViewerActivity::class.java).putExtra(EXTRA_MEDIA_ID, mediaId)
     }
+}
+
+private fun fmtTime(ms: Long): String {
+    val total = (ms / 1000L).coerceAtLeast(0L)
+    val h = total / 3600
+    val m = (total % 3600) / 60
+    val s = total % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
 }
 
 private data class TrackOption(
@@ -423,134 +645,53 @@ private data class TrackOption(
 @UnstableApi
 @Composable
 private fun PlayerScreen(
-    title: String,
     toast: String?,
-    speed: Float,
-    onSpeed: (Float) -> Unit,
-    subtitleBgAlpha: Float,
-    subtitleTextSize: Float,
-    onSubtitleStyle: (Float, Float) -> Unit,
-    controlsVisible: Boolean,
-    resizeMode: Int,
-    onResizeMode: (Int) -> Unit,
-    isLandscape: Boolean,
-    onToggleOrientation: () -> Unit,
-    onShowTrackDialog: () -> Unit,
-    onShowSubtitleStyleDialog: () -> Unit,
-    onViewCreated: (PlayerView) -> Unit
+    seekPreview: String?,
+    onViewCreated: (PlayerView, Context) -> Unit,
+    updateResizeMode: (PlayerView) -> Unit
 ) {
-    val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
-
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-                PlayerView(ctx).apply {
-                    useController = true
-                    setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
-                    setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT)
-                    keepScreenOn = true
-                    controllerShowTimeoutMs = 3_500
-                }.also { onViewCreated(it) }
+                val view = LayoutInflater.from(ctx)
+                    .inflate(R.layout.view_doudou_player, null) as PlayerView
+                onViewCreated(view, ctx)
+                view
             },
             update = { view ->
-                view.setResizeMode(
-                    when (resizeMode) {
-                        1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                        2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                        else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    }
-                )
+                updateResizeMode(view)
             }
         )
 
-        // Compose Overlay 只画标题和 toast —— 播放器控件完全交给 PlayerView 默认控制条
-        Box(Modifier.fillMaxSize()) {
+        // 顶部标题仅在控制条里展示；这里只保留拖动进度预览与错误提示
+        if (!seekPreview.isNullOrBlank()) {
             Box(
                 Modifier
-                    .align(Alignment.TopStart)
-                    .padding(20.dp)
-                    .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 14.dp, vertical = 9.dp)
+                    .align(Alignment.TopCenter)
+                    .padding(top = 72.dp)
+                    .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 Text(
-                    text = title,
+                    seekPreview,
                     color = Color.White,
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
-
-            if (!toast.isNullOrBlank()) {
-                Box(
-                    Modifier
-                        .align(Alignment.Center)
-                        .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(10.dp))
-                        .padding(horizontal = 18.dp, vertical = 12.dp)
-                ) {
-                    Text(toast, color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                }
-            }
         }
 
-        // VidHub 风格：倍速/字幕按钮随控制条一起显隐，画在控制条区域上方
-        AnimatedVisibility(
-            visible = controlsVisible,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(bottom = 64.dp) // 避开 PlayerView 默认控制条（通常在底部 ~80dp 区域）
-        ) {
-            Column(
-                Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+        if (!toast.isNullOrBlank()) {
+            Box(
+                Modifier
+                    .align(Alignment.Center)
+                    .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 18.dp, vertical = 12.dp)
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    speeds.forEach { s ->
-                        val selected = kotlin.math.abs(speed - s) < 0.01f
-                        ControlChip(
-                            label = if (s == s.toInt().toFloat()) "${s.toInt()}x" else "${s}x",
-                            selected = selected
-                        ) { onSpeed(s) }
-                    }
-                }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    ControlChip("音轨 · 字幕") { onShowTrackDialog() }
-                    ControlChip(
-                        label = when (resizeMode) { 1 -> "铺满"; 2 -> "缩放"; else -> "适应" }
-                    ) { onResizeMode((resizeMode + 1) % 3) }
-                    ControlChip(if (isLandscape) "小屏" else "全屏") { onToggleOrientation() }
-                }
+                Text(toast, color = Color.White, style = MaterialTheme.typography.bodyMedium)
             }
         }
-    }
-}
-
-@Composable
-private fun ControlChip(label: String, selected: Boolean = false, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(
-                if (selected) AppColors.Brand
-                else Color.Black.copy(alpha = 0.55f)
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp)
-    ) {
-        Text(
-            text = label,
-            color = if (selected) Color.White else Color.White.copy(alpha = 0.9f),
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold
-        )
     }
 }
 
@@ -567,6 +708,9 @@ private fun TrackDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
+        dismissButton = {
+            TextButton(onClick = onStyle) { Text("字幕外观") }
+        },
         containerColor = AppColors.Surface,
         title = { Text("音轨与字幕", color = AppColors.TextPrimary) },
         text = {
@@ -608,6 +752,55 @@ private fun TrackRow(option: TrackOption, onClick: () -> Unit) {
         if (option.selected) Text("✓", color = AppColors.Brand,
             style = MaterialTheme.typography.titleSmall)
     }
+}
+
+@Composable
+private fun EpisodeDialog(
+    episodes: List<MediaEntity>,
+    current: MediaEntity?,
+    onDismiss: () -> Unit,
+    onSelect: (MediaEntity) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+        containerColor = AppColors.Surface,
+        title = { Text("选集（共 ${episodes.size} 集）", color = AppColors.TextPrimary) },
+        text = {
+            LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                items(episodes, key = { it.id }) { ep ->
+                    val selected = current?.id == ep.id
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (selected) AppColors.SurfaceHi else Color.Transparent)
+                            .clickable { onSelect(ep) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            if (ep.episode > 0) "E%02d".format(ep.episode) else "•",
+                            color = if (selected) AppColors.Brand else AppColors.TextTertiary,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Text(
+                            ep.title,
+                            color = if (selected) AppColors.Brand else AppColors.TextPrimary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (selected) {
+                            Text("播放中", color = AppColors.Brand,
+                                style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        }
+    )
 }
 
 @Composable

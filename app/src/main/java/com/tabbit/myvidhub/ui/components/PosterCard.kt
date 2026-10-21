@@ -1,7 +1,8 @@
 package com.tabbit.myvidhub.ui.components
 
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -59,9 +60,13 @@ fun PosterCard(
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
 
+    // TV 遥控器聚焦：带过冲的弹性放大，弹一下让用户明确"选中了"
     val scale by animateFloatAsState(
-        targetValue = if (focused) 1.05f else 1f,
-        animationSpec = tween(180),
+        targetValue = if (focused) 1.09f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = 420f
+        ),
         label = "poster_scale"
     )
 

@@ -1,0 +1,286 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  VidHub 风格播放器控制条（VidHub-like player controller）。
+
+  该布局由 PlayerView 通过 app:controller_layout_id 挂载，是**播放器本体**的一部分：
+  它随 PlayerView 的自动显隐、遥控器焦点、seek bar 拖动一起工作，不再浮在播放器之上。
+
+  exo_* 系列 id 是 Media3 PlayerControlView 内置绑定所需的：
+  · exo_progress    DefaultTimeBar（seek 拖动）
+  · exo_play_pause  播放/暂停（图标由 Media3 自动切换）
+  · exo_rew / exo_ffwd  快退/快进
+  · exo_position / exo_duration 时间
+  其余 exo_* 占位（0dp + gone）保证 PlayerControlView 内部 findViewById 不为空，
+  真正的按钮改用 doudou_* 自定义 id，由 ViewerActivity 绑定点击。
+
+  按钮仅使用系统 drawable 与自定义 drawable，不引用 Media3 的非公开资源。
+-->
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 控制条背景遮罩：只覆盖视频，不额外叠一层 Compose 浮层 -->
+    <View
+        android:id="@+id/doudou_controls_scrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#59000000" />
+
+    <!-- ================= 顶部：返回 + 标题 ================= -->
+    <LinearLayout
+        android:id="@+id/doudou_top_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="18dp">
+
+        <TextView
+            android:id="@+id/doudou_back"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:background="@drawable/doudou_pill_bg"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="‹ 返回"
+            android:textColor="@android:color/white"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/doudou_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:shadowColor="#99000000"
+            android:shadowDx="0"
+            android:shadowDy="1"
+            android:shadowRadius="3"
+            android:textColor="@android:color/white"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+    <!-- ================= 中央：快退 / 播放暂停 / 快进 ================= -->
+    <LinearLayout
+        android:id="@+id/exo_center_controls"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/exo_rew"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_marginEnd="18dp"
+            android:background="@drawable/doudou_circle_bg"
+            android:contentDescription="快退 10 秒"
+            android:padding="12dp"
+            android:scaleType="centerInside"
+            android:src="@android:drawable/ic_media_rew"
+            android:tint="@android:color/white" />
+
+        <ImageButton
+            android:id="@+id/exo_play_pause"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:background="@drawable/doudou_circle_bg"
+            android:contentDescription="播放/暂停"
+            android:padding="22dp"
+            android:scaleType="centerInside"
+            android:src="@android:drawable/ic_media_play"
+            android:tint="@android:color/white" />
+
+        <ImageButton
+            android:id="@+id/exo_ffwd"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_marginStart="18dp"
+            android:background="@drawable/doudou_circle_bg"
+            android:contentDescription="快进 30 秒"
+            android:padding="12dp"
+            android:scaleType="centerInside"
+            android:src="@android:drawable/ic_media_ff"
+            android:tint="@android:color/white" />
+    </LinearLayout>
+
+    <!-- ================= 底部：进度 + 功能按钮 ================= -->
+    <LinearLayout
+        android:id="@+id/doudou_bottom_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="@drawable/doudou_bottom_scrim"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="26dp"
+        android:paddingBottom="10dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/exo_position"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@android:color/white"
+                android:textSize="12sp" />
+
+            <androidx.media3.ui.DefaultTimeBar
+                android:id="@+id/exo_progress"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:layout_marginEnd="10dp"
+                android:layout_weight="1" />
+
+            <TextView
+                android:id="@+id/exo_duration"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@android:color/white"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <HorizontalScrollView
+            android:id="@+id/doudou_actions_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:fillViewport="true"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/doudou_prev_episode"
+                    style="@style/PlayerPill"
+                    android:text="上一集" />
+
+                <TextView
+                    android:id="@+id/doudou_episodes"
+                    style="@style/PlayerPill"
+                    android:text="选集" />
+
+                <TextView
+                    android:id="@+id/doudou_next_episode"
+                    style="@style/PlayerPill"
+                    android:text="下一集" />
+
+                <TextView
+                    android:id="@+id/doudou_speed"
+                    style="@style/PlayerPill"
+                    android:text="1.0x" />
+
+                <TextView
+                    android:id="@+id/doudou_tracks"
+                    style="@style/PlayerPill"
+                    android:text="字幕" />
+
+                <TextView
+                    android:id="@+id/doudou_aspect"
+                    style="@style/PlayerPill"
+                    android:text="适应" />
+
+                <TextView
+                    android:id="@+id/doudou_orientation"
+                    style="@style/PlayerPill"
+                    android:text="全屏" />
+
+                <!-- 以下 id 只作为 Media3 内部绑定的占位，不参与布局 -->
+                <ImageButton
+                    android:id="@+id/exo_prev"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+
+                <ImageButton
+                    android:id="@+id/exo_next"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+
+                <ImageButton
+                    android:id="@+id/exo_repeat_toggle"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+
+                <ImageButton
+                    android:id="@+id/exo_shuffle"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+
+                <ImageButton
+                    android:id="@+id/exo_vr"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+
+                <ImageButton
+                    android:id="@+id/exo_subtitle"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+
+                <ImageButton
+                    android:id="@+id/exo_fullscreen"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+
+                <ImageButton
+                    android:id="@+id/exo_minimal_fullscreen"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+
+                <View
+                    android:id="@+id/exo_settings"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+
+                <View
+                    android:id="@+id/exo_playback_speed"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+
+                <View
+                    android:id="@+id/exo_audio_track"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/exo_rew_with_amount"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/exo_ffwd_with_amount"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </HorizontalScrollView>
+    </LinearLayout>
+</merge>

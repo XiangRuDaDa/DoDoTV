@@ -1,5 +1,7 @@
 package com.tabbit.myvidhub.ui.detail
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -42,12 +44,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontStyle
@@ -55,7 +59,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.palette.graphics.Palette
-import android.graphics.drawable.BitmapDrawable
+import android.graphics.Bitmap
+import androidx.core.graphics.drawable.toBitmap
 import coil.compose.AsyncImage
 import com.tabbit.myvidhub.data.emby.EmbyClient
 import com.tabbit.myvidhub.data.model.MediaEntity
@@ -63,6 +68,9 @@ import com.tabbit.myvidhub.data.model.MediaKind
 import com.tabbit.myvidhub.data.model.SourceKind
 import com.tabbit.myvidhub.ui.LibraryViewModel
 import com.tabbit.myvidhub.ui.theme.AppColors
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 剧集/电影详情页（VidHub 形态）。
@@ -141,22 +149,46 @@ fun DetailScreen(
         if (seasons.size <= 1) episodes else episodes.filter { it.season == selectedSeason }
     }
 
-    // 背景：海报主色 → 深色渐变沉底，随每部片子的封面气质变化
-    val bgBrush = remember(dominantColor) {
-        if (dominantColor != Color.Unspecified) {
-            Brush.verticalGradient(
-                0f to dominantColor.copy(alpha = 0.42f),
-                0.35f to dominantColor.copy(alpha = 0.18f),
-                1f to AppColors.Bg
-            )
-        } else {
-            Brush.verticalGradient(0f to AppColors.Bg, 1f to AppColors.Bg)
-        }
+    /**
+     * 从封面图提取"聚焦色"，并把整页底色压成它的深色版本。
+     *
+     * 之前的实现只用了 Palette 的 darkMuted 并给很低的 alpha，暗色海报基本等于纯黑；
+     * 这里改成：优先取有饱和度的色块 → 保证亮度/饱和度下限 → 整页用不透明深色铺满，
+     * 所以无论海报明暗，页面都会带上它自己的色调。
+     */
+    val pageColor = remember(dominantColor) {
+        if (dominantColor == Color.Unspecified) AppColors.Bg else toneForPage(dominantColor)
+    }
+    val animatedPageColor by animateColorAsState(
+        targetValue = pageColor,
+        animationSpec = tween(650),
+        label = "page_color"
+    )
+
+    // 顶部亮、往下沉黑：整块是实色，滚动时不会再露出纯黑
+    val bgBrush = remember(animatedPageColor) {
+        Brush.verticalGradient(
+            0f to animatedPageColor,
+            0.55f to animatedPageColor,
+            1f to lerp(animatedPageColor, Color.Black, 0.55f)
+        )
     }
 
-    Box(Modifier.fillMaxSize().background(AppColors.Bg)) {
-        // 主色氛围层
-        Box(Modifier.fillMaxSize().background(bgBrush))
+    Box(Modifier.fillMaxSize().background(bgBrush)) {
+        // 封面加载完成后在后台提取聚焦色（缩略图采样，开销很小）
+        val scope = rememberCoroutineScope()
+        val extract: (coil.compose.AsyncImagePainter.State.Success) -> Unit = remember {
+            { state ->
+                scope.launch {
+                    val color = withContext(Dispatchers.Default) {
+                        runCatching {
+                            focusColorOf(state.result.drawable.toBitmap(160, 160))
+                        }.getOrNull()
+                    }
+                    if (color != null && color != Color.Unspecified) dominantColor = color
+                }
+            }
+        }
         if (loading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = AppColors.Brand)
@@ -184,21 +216,25 @@ fun DetailScreen(
                                 model = art,
                                 contentDescription = item.title,
                                 contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier.fillMaxSize(),
+                                onSuccess = { state ->
+                                    // 头图先给一个基调，海报加载完会覆盖成更准确的聚焦色
+                                    if (dominantColor == Color.Unspecified) extract(state)
+                                }
                             )
                         } else {
                             Box(Modifier.fillMaxSize().background(AppColors.Surface))
                         }
 
-                        // 渐变沉入底色
+                        // 头图底部渐变到整页底色：与页面背景同色，接缝完全消失
                         Box(
                             Modifier
                                 .fillMaxSize()
                                 .background(
                                     Brush.verticalGradient(
-                                        0f to Color.Black.copy(alpha = 0.4f),
-                                        0.6f to Color.Black.copy(alpha = 0.6f),
-                                        1f to AppColors.Bg
+                                        0f to Color.Black.copy(alpha = 0.45f),
+                                        0.55f to Color.Black.copy(alpha = 0.25f),
+                                        1f to animatedPageColor
                                     )
                                 )
                         )
@@ -241,21 +277,7 @@ fun DetailScreen(
                                         contentDescription = item.title,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize(),
-                                        onSuccess = { state ->
-                                            // 从海报提取主色驱动背景渐变
-                                            (state.result.drawable as? BitmapDrawable)
-                                                ?.bitmap?.let { bmp ->
-                                                    Palette.from(bmp).generate { palette ->
-                                                        val swatch = palette
-                                                            ?.darkMutedSwatch
-                                                            ?: palette?.darkVibrantSwatch
-                                                            ?: palette?.vibrantSwatch
-                                                            ?: palette?.dominantSwatch
-                                                        val argb = swatch?.rgb
-                                                        if (argb != null) dominantColor = Color(argb)
-                                                    }
-                                                }
-                                        }
+                                        onSuccess = { state -> extract(state) }
                                     )
                                 }
                             }
@@ -530,6 +552,68 @@ private fun playTarget(item: MediaEntity, episodes: List<MediaEntity>): MediaEnt
     if (item.kind == MediaKind.SERIES) {
         episodes.firstOrNull { it.positionMs > 0 } ?: episodes.firstOrNull()
     } else item
+
+/**
+ * 从封面提取"聚焦色"。
+ *
+ * 优先取饱和度较高的色块（vibrant/lightVibrant/muted/...），
+ * 并给饱和度、亮度设下限，避免暗色海报提取出来仍然是黑色。
+ * 灰度封面提取不到色相时退回品牌色，保证页面总有色调。
+ */
+private fun focusColorOf(bitmap: Bitmap): Color {
+    val palette = runCatching { Palette.from(bitmap).generate() }.getOrNull()
+    val swatch = listOfNotNull(
+        palette?.vibrantSwatch,
+        palette?.lightVibrantSwatch,
+        palette?.mutedSwatch,
+        palette?.darkVibrantSwatch,
+        palette?.dominantSwatch,
+        palette?.darkMutedSwatch
+    ).firstOrNull { it.population > 0 }
+
+    val argb = swatch?.rgb ?: averageColorOf(bitmap)
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(argb, hsv)
+    if (hsv[1] < 0.06f) return AppColors.Brand
+
+    hsv[1] = hsv[1].coerceIn(0.40f, 0.90f)
+    hsv[2] = hsv[2].coerceIn(0.45f, 0.82f)
+    return Color(android.graphics.Color.HSVToColor(hsv))
+}
+
+/** 整页底色：保留聚焦色的色相，压暗到适合大面积铺底的明度 */
+private fun toneForPage(focus: Color): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(focus.toArgb(), hsv)
+    hsv[1] = (hsv[1] * 0.95f).coerceIn(0.32f, 0.78f)
+    hsv[2] = 0.30f
+    return Color(android.graphics.Color.HSVToColor(hsv))
+}
+
+/** Palette 失败时的兜底：按步长采样求平均色 */
+private fun averageColorOf(bitmap: Bitmap): Int {
+    var r = 0L
+    var g = 0L
+    var b = 0L
+    var n = 0L
+    val stepX = (bitmap.width / 24).coerceAtLeast(1)
+    val stepY = (bitmap.height / 24).coerceAtLeast(1)
+    var y = 0
+    while (y < bitmap.height) {
+        var x = 0
+        while (x < bitmap.width) {
+            val p = bitmap.getPixel(x, y)
+            r += android.graphics.Color.red(p)
+            g += android.graphics.Color.green(p)
+            b += android.graphics.Color.blue(p)
+            n++
+            x += stepX
+        }
+        y += stepY
+    }
+    if (n == 0L) return android.graphics.Color.DKGRAY
+    return android.graphics.Color.rgb((r / n).toInt(), (g / n).toInt(), (b / n).toInt())
+}
 
 private fun detailMeta(item: MediaEntity): String {
     val parts = mutableListOf<String>()

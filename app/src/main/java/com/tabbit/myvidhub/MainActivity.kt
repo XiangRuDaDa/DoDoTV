@@ -5,27 +5,41 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -36,7 +50,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -147,23 +164,10 @@ private fun AppRoot() {
     ) { padding ->
         Row(Modifier.fillMaxSize().padding(padding)) {
             if (isTv) {
-                NavigationRail(containerColor = AppColors.Surface, modifier = Modifier.width(88.dp)) {
-                    Tab.entries.forEach { t ->
-                        NavigationRailItem(
-                            selected = currentTab == t,
-                            onClick = { route = tabRoute(t) },
-                            icon = { Icon(t.icon, contentDescription = t.label) },
-                            label = { Text(t.label) },
-                            colors = androidx.compose.material3.NavigationRailItemDefaults.colors(
-                                selectedIconColor = AppColors.Brand,
-                                selectedTextColor = AppColors.Brand,
-                                unselectedIconColor = AppColors.TextTertiary,
-                                unselectedTextColor = AppColors.TextTertiary,
-                                indicatorColor = Color.Transparent
-                            )
-                        )
-                    }
-                }
+                TvNavigationRail(
+                    currentTab = currentTab,
+                    onSelect = { route = tabRoute(it) }
+                )
             }
 
             // ---------- 页面切换过渡 ----------
@@ -246,4 +250,82 @@ private fun tabRoute(tab: Tab): Route = when (tab) {
     Tab.HOME -> Route.Home
     Tab.SOURCES -> Route.Sources
     Tab.SETTINGS -> Route.Settings
+}
+
+/**
+ * TV 左侧导航栏（VidHub 形态）。
+ *
+ * 默认收成只剩图标的窄条，遥控器焦点移到栏内时平滑展开显示文字标签，
+ * 焦点离开后自动收回，把画面宽度还给海报墙。
+ */
+@Composable
+private fun TvNavigationRail(currentTab: Tab, onSelect: (Tab) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val width by animateDpAsState(
+        targetValue = if (expanded) 188.dp else 72.dp,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "rail_width"
+    )
+
+    Column(
+        Modifier
+            .fillMaxHeight()
+            .width(width)
+            .background(AppColors.Surface)
+            .onFocusChanged { expanded = it.hasFocus }
+    ) {
+        // 顶部留白，避免贴边
+        Box(Modifier.height(28.dp))
+
+        Tab.entries.forEach { t ->
+            val selected = currentTab == t
+            val interaction = remember { MutableInteractionSource() }
+            val focused by interaction.collectIsFocusedAsState()
+
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        when {
+                            focused || selected -> AppColors.SurfaceHi
+                            else -> Color.Transparent
+                        }
+                    )
+                    .clickable(
+                        interactionSource = interaction,
+                        indication = null,
+                        onClick = { onSelect(t) }
+                    )
+                    .focusable()
+                    .padding(horizontal = 12.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    t.icon,
+                    contentDescription = t.label,
+                    tint = if (focused || selected) AppColors.Brand else AppColors.TextTertiary,
+                    modifier = Modifier.size(22.dp)
+                )
+                AnimatedVisibility(
+                    visible = expanded,
+                    enter = fadeIn(tween(180)),
+                    exit = fadeOut(tween(90))
+                ) {
+                    Text(
+                        t.label,
+                        modifier = Modifier.padding(start = 12.dp),
+                        color = if (focused || selected) AppColors.Brand else AppColors.TextSecondary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        softWrap = false,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
 }
