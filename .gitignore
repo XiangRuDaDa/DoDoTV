@@ -12,3 +12,6 @@ captures/
 
 *.keystore
 *.jks
+
+# 例外：固定 debug 签名随仓库分发，保证本地与 CI 构建的安装包可互相覆盖升级
+!app/debug.keystore
