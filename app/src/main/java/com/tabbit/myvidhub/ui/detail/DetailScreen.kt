@@ -156,36 +156,62 @@ fun DetailScreen(
      * 这里改成：优先取有饱和度的色块 → 保证亮度/饱和度下限 → 整页用不透明深色铺满，
      * 所以无论海报明暗，页面都会带上它自己的色调。
      */
-    val pageColor = remember(dominantColor) {
-        if (dominantColor == Color.Unspecified) AppColors.Bg else toneForPage(dominantColor)
+    val pageTones = remember(dominantColor) {
+        if (dominantColor == Color.Unspecified) {
+            AppColors.Bg to lerp(AppColors.Bg, Color.Black, 0.55f)
+        } else {
+            pageTonesOf(dominantColor)
+        }
     }
-    val animatedPageColor by animateColorAsState(
-        targetValue = pageColor,
-        animationSpec = tween(650),
-        label = "page_color"
+    val animatedTop by animateColorAsState(
+        targetValue = pageTones.first,
+        animationSpec = tween(700),
+        label = "page_top"
+    )
+    val animatedBottom by animateColorAsState(
+        targetValue = pageTones.second,
+        animationSpec = tween(700),
+        label = "page_bottom"
     )
 
-    // 顶部亮、往下沉黑：整块是实色，滚动时不会再露出纯黑
-    val bgBrush = remember(animatedPageColor) {
+    // 整页填充色 = 封面聚焦色：顶部色相最浓，向下同色相压暗，滚动到底也不会露出纯黑断层
+    val bgBrush = remember(animatedTop, animatedBottom) {
         Brush.verticalGradient(
-            0f to animatedPageColor,
-            0.55f to animatedPageColor,
-            1f to lerp(animatedPageColor, Color.Black, 0.55f)
+            0f to animatedTop,
+            0.30f to animatedTop,
+            0.68f to lerp(animatedTop, animatedBottom, 0.72f),
+            1f to animatedBottom
+        )
+    }
+
+    // 封面 → 填充色的渐变过渡：头图下方 45% 区间由封面逐渐溶解成整页填充色，两者之间没有硬边
+    val headerScrim = remember(animatedTop) {
+        Brush.verticalGradient(
+            0f to Color.Black.copy(alpha = 0.34f),
+            0.26f to Color.Transparent,
+            0.52f to animatedTop.copy(alpha = 0.30f),
+            0.76f to animatedTop.copy(alpha = 0.78f),
+            1f to animatedTop
         )
     }
 
     Box(Modifier.fillMaxSize().background(bgBrush)) {
-        // 封面加载完成后在后台提取聚焦色（缩略图采样，开销很小）
+        // 封面加载完成后在后台提取聚焦色（缩略图采样 160px，耗时约几毫秒，主线程无感）
         val scope = rememberCoroutineScope()
-        val extract: (coil.compose.AsyncImagePainter.State.Success) -> Unit = remember {
-            { state ->
+        // 同一次进入详情页，记录最近一次成功提取的色，避免头图/海报互相覆盖导致闪烁
+        var lastApplied by remember { mutableStateOf(Color.Unspecified) }
+        val extract: (String, coil.compose.AsyncImagePainter.State.Success) -> Unit = remember {
+            { url, state ->
                 scope.launch {
                     val color = withContext(Dispatchers.Default) {
-                        runCatching {
+                        FocusColorCache.get(url) ?: runCatching {
                             focusColorOf(state.result.drawable.toBitmap(160, 160))
-                        }.getOrNull()
+                        }.getOrNull()?.also { FocusColorCache.put(url, it) }
                     }
-                    if (color != null && color != Color.Unspecified) dominantColor = color
+                    if (color != null && color != Color.Unspecified && color != lastApplied) {
+                        lastApplied = color
+                        dominantColor = color
+                    }
                 }
             }
         }
@@ -219,7 +245,7 @@ fun DetailScreen(
                                 modifier = Modifier.fillMaxSize(),
                                 onSuccess = { state ->
                                     // 头图先给一个基调，海报加载完会覆盖成更准确的聚焦色
-                                    if (dominantColor == Color.Unspecified) extract(state)
+                                    if (dominantColor == Color.Unspecified) extract(art, state)
                                 }
                             )
                         } else {
@@ -230,13 +256,7 @@ fun DetailScreen(
                         Box(
                             Modifier
                                 .fillMaxSize()
-                                .background(
-                                    Brush.verticalGradient(
-                                        0f to Color.Black.copy(alpha = 0.45f),
-                                        0.55f to Color.Black.copy(alpha = 0.25f),
-                                        1f to animatedPageColor
-                                    )
-                                )
+                                .background(headerScrim)
                         )
 
                         IconButton(
@@ -277,7 +297,7 @@ fun DetailScreen(
                                         contentDescription = item.title,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize(),
-                                        onSuccess = { state -> extract(state) }
+                                        onSuccess = { state -> extract(item.posterUrl, state) }
                                     )
                                 }
                             }
@@ -554,6 +574,28 @@ private fun playTarget(item: MediaEntity, episodes: List<MediaEntity>): MediaEnt
     } else item
 
 /**
+ * 封面聚焦色缓存。
+ *
+ * 详情页的封面通常还会出现在首页海报、继续观看等位置，同一张图反复解码取色是浪费。
+ * 以图片地址为 key 做一张小容量 LRU，返回时直接命中，取色只在首次发生。
+ */
+private object FocusColorCache {
+    private const val MAX = 64
+    private val map = object : LinkedHashMap<String, Color>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Color>?): Boolean =
+            size > MAX
+    }
+
+    @Synchronized
+    fun get(url: String): Color? = map[url]
+
+    @Synchronized
+    fun put(url: String, color: Color) {
+        map[url] = color
+    }
+}
+
+/**
  * 从封面提取"聚焦色"。
  *
  * 优先取饱和度较高的色块（vibrant/lightVibrant/muted/...），
@@ -581,13 +623,26 @@ private fun focusColorOf(bitmap: Bitmap): Color {
     return Color(android.graphics.Color.HSVToColor(hsv))
 }
 
-/** 整页底色：保留聚焦色的色相，压暗到适合大面积铺底的明度 */
-private fun toneForPage(focus: Color): Color {
+/**
+ * 整页填充的两个端点色，都保留聚焦色的色相：
+ *   first  = 顶部，色相最浓、略亮，承接头图
+ *   second = 底部，同色相压得更暗，收住长列表
+ * 两端同色系，中间用 lerp 平滑插值，天然没有色带断层。
+ */
+private fun pageTonesOf(focus: Color): Pair<Color, Color> {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(focus.toArgb(), hsv)
-    hsv[1] = (hsv[1] * 0.95f).coerceIn(0.32f, 0.78f)
-    hsv[2] = 0.30f
-    return Color(android.graphics.Color.HSVToColor(hsv))
+
+    val topHsv = hsv.copyOf()
+    topHsv[1] = (topHsv[1] * 0.96f).coerceIn(0.34f, 0.80f)
+    topHsv[2] = 0.34f
+
+    val bottomHsv = hsv.copyOf()
+    bottomHsv[1] = (bottomHsv[1] * 0.90f).coerceIn(0.30f, 0.72f)
+    bottomHsv[2] = 0.14f
+
+    return Color(android.graphics.Color.HSVToColor(topHsv)) to
+        Color(android.graphics.Color.HSVToColor(bottomHsv))
 }
 
 /** Palette 失败时的兜底：按步长采样求平均色 */
