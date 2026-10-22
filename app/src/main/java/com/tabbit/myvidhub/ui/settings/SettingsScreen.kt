@@ -55,6 +55,7 @@ fun SettingsScreen(vm: LibraryViewModel) {
     var forceTv by remember { mutableStateOf(prefs.getBoolean(KEY_FORCE_TV, false)) }
     var tmdbKey by remember { mutableStateOf(Prefs.tmdbApiKey) }
     var tmdbToken by remember { mutableStateOf(Prefs.tmdbReadToken) }
+    var tmdbMirror by remember { mutableStateOf(Prefs.tmdbImageBase) }
 
     // 凭据变更计数：自增即触发重组，并重新判定刮削引擎
     var engineTick by remember { mutableStateOf(0) }
@@ -174,6 +175,37 @@ fun SettingsScreen(vm: LibraryViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     placeholder = { Text("粘贴 Read Access Token（较长串）") },
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = AppColors.TextPrimary,
+                        unfocusedTextColor = AppColors.TextSecondary,
+                        focusedBorderColor = AppColors.Brand,
+                        unfocusedBorderColor = AppColors.SurfaceHi
+                    )
+                )
+
+                // ---- 图片镜像（国内加速）----
+                Text(
+                    "图片镜像域名（可选，国内加速）",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = AppColors.TextPrimary
+                )
+                Text(
+                    "国内直连 image.tmdb.org 常常很慢，海报要等十几秒才出来，期间详情页只能显示兜底色。\n" +
+                        "填一个可用镜像后，所有 TMDB 图片请求会自动改写过去，出图速度通常快数倍。\n" +
+                        "只填域名即可，例如 https://tmdb-image.example.com；留空则用官方域名。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AppColors.TextTertiary
+                )
+                OutlinedTextField(
+                    value = tmdbMirror,
+                    onValueChange = {
+                        tmdbMirror = it
+                        Prefs.tmdbImageBase = it
+                        engineTick++
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("https://你的镜像域名") },
                     colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
                         focusedTextColor = AppColors.TextPrimary,
                         unfocusedTextColor = AppColors.TextSecondary,

@@ -195,8 +195,16 @@ class TmdbClient(
          */
         private val sharedHttp: OkHttpClient by lazy {
             OkHttpClient.Builder()
-                .connectTimeout(12, TimeUnit.SECONDS)
-                .readTimeout(25, TimeUnit.SECONDS)
+                // 超时收紧到 6s/10s（原来是 12s/25s）。
+                // 国内直连 TMDB 经常「能连但很慢」，长超时会让每个失败请求白等十几秒，
+                // 多个请求叠加起来就是「刮削特别慢」的直接观感。
+                // 快速失败 + 缓存兜底，比死等更划算。
+                .connectTimeout(6, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.SECONDS)
+                // 整个调用（含重定向、读 body）的上限，防止个别请求无限拖
+                .callTimeout(15, TimeUnit.SECONDS)
+                // 复用连接：保持 5 个空闲连接 5 分钟，后续请求不用重新握手
+                .connectionPool(okhttp3.ConnectionPool(5, 5, TimeUnit.MINUTES))
                 .retryOnConnectionFailure(true)
                 .build()
         }

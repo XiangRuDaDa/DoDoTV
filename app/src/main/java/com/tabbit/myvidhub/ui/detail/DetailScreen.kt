@@ -65,6 +65,7 @@ import androidx.palette.graphics.Palette
 import android.graphics.Bitmap
 import androidx.core.graphics.drawable.toBitmap
 import coil.compose.AsyncImage
+import com.tabbit.myvidhub.core.Prefs
 import com.tabbit.myvidhub.data.scrape.ScrapeEngine
 import com.tabbit.myvidhub.data.scrape.ScrapeStrategy
 import com.tabbit.myvidhub.data.emby.EmbyClient
@@ -77,6 +78,7 @@ import com.tabbit.myvidhub.ui.theme.AppColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.runtime.collectAsState
 
 /**
  * 剧集/电影详情页（VidHub 形态）。
@@ -110,8 +112,35 @@ fun DetailScreen(
     /** TMDB 刮削信息（海报/背景图/Logo/评分/简介/演职员），作为 Emby 的补充 */
     var tmdb by remember { mutableStateOf<com.tabbit.myvidhub.data.tmdb.TmdbClient.ScrapeResult?>(null) }
 
-    /** 海报主色：驱动整页背景渐变，营造沉浸感 */
-    var dominantColor by remember { mutableStateOf(Color.Unspecified) }
+    /**
+     * 海报主色：驱动整页背景渐变，营造沉浸感。
+     *
+     * 初值不再是 Color.Unspecified。Unspecified 会走到「近黑兜底色」分支，
+     * 而真正的取色必须等海报图片下载解码完成（国内直连 TMDB 图片常常要好几秒），
+     * 于是用户看到的就是「刚进详情页海报下方一片黑，滑动一下颜色才出来」。
+     * 这里在组合阶段就用库里已有的条目算出一个确定的主色，保证第一帧就有色：
+     *   1. 上次算过并落盘的主色（最快，零成本）
+     *   2. 内存里 FocusColorCache 的封面主色
+     *   3. 标题哈希色（永远有结果，且同一部片每次进去颜色一致）
+     * 图片解码完成后会被真实封面主色平滑替换，用户只会看到一次渐变收敛。
+     */
+    // 注意：这里不能用 vm.mediaOf()，那是 suspend 函数，组合阶段调用会编译不过。
+    // 改从已订阅的 library 里同步查；library 一到位 remember 的 key 变化会重新给初值，
+    // 因此「库数据晚于首帧到达」也能自动补上正确的颜色，不会停在兜底黑。
+    val libraryState by vm.library.collectAsState()
+    val seedMedia = remember(libraryState, mediaId) {
+        libraryState.firstOrNull { it.id == mediaId }
+    }
+    var dominantColor by remember(mediaId, seedMedia?.title) {
+        mutableStateOf(
+            seedMedia?.let { seed ->
+                val seedUrl = seed.posterUrl.ifBlank { seed.backdropUrl }
+                val persisted = Prefs.detailTone(seed.title).takeIf { it != 0 }
+                if (persisted != null) Color(persisted)
+                else FocusColorCache.get(seedUrl) ?: fallbackColorFromTitle(seed.title)
+            } ?: fallbackColorFromTitle(seedMedia?.title.orEmpty())
+        )
+    }
 
     LaunchedEffect(mediaId) {
         loading = true
@@ -188,12 +217,15 @@ fun DetailScreen(
         val cached = FocusColorCache.get(url)
         if (cached != null) {
             dominantColor = cached
+            Prefs.putDetailTone(m.title, cached.toArgb())
             return@LaunchedEffect
         }
         val bmp = withContext(Dispatchers.Default) { loadPosterBitmap(context, url) }
         val color = bmp?.let { runCatching { focusColorOf(it) }.getOrNull() }
             ?: fallbackColorFromTitle(m.title)
         FocusColorCache.put(url, color)
+        // 一并写盘：下次冷启动进同一部片，第一帧就能拿到这个颜色
+        Prefs.putDetailTone(m.title, color.toArgb())
         dominantColor = color
     }
 
@@ -218,12 +250,12 @@ fun DetailScreen(
     }
     val animatedTop by animateColorAsState(
         targetValue = pageTones.first,
-        animationSpec = tween(700),
+        animationSpec = tween(320),
         label = "page_top"
     )
     val animatedBottom by animateColorAsState(
         targetValue = pageTones.second,
-        animationSpec = tween(700),
+        animationSpec = tween(320),
         label = "page_bottom"
     )
 
@@ -296,7 +328,9 @@ fun DetailScreen(
                                 modifier = Modifier.fillMaxSize()
                             )
                         } else {
-                            Box(Modifier.fillMaxSize().background(AppColors.Surface))
+                            // 没有海报时也别用中性深灰（在大片主色里就是一块黑），
+                            // 直接用当前主色，视觉上始终是同一套色调
+                            Box(Modifier.fillMaxSize().background(animatedTop))
                         }
 
                         // 海报 → 页面主色：渐变 + 透明度双重过渡（不再有生硬截断）
