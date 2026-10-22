@@ -6,6 +6,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.tabbit.myvidhub.data.scrape.ScrapeEngine
+import com.tabbit.myvidhub.data.scrape.ScrapeStrategy
 import com.tabbit.myvidhub.data.MediaRepository
 import com.tabbit.myvidhub.data.emby.EmbyClient
 import com.tabbit.myvidhub.data.model.MediaEntity
@@ -55,7 +57,19 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     var message by mutableStateOf<String?>(null)
 
+    /** 当前刮削引擎：启动时判定，设置页改凭据后会刷新 */
+    var scrapeEngine by mutableStateOf(ScrapeStrategy.engine)
+        private set
+
+    /** 重新判定刮削方案（用户改完 TMDB 凭据后调用，免重启生效） */
+    fun refreshScrapeEngine() {
+        scrapeEngine = ScrapeStrategy.refresh()
+    }
+
     init {
+        // 启动判定：TMDB 凭据非空 → TMDB 刮削；为空 → 原有方案
+        ScrapeStrategy.refresh()
+        scrapeEngine = ScrapeStrategy.engine
         // 冷启动时若已配置来源但本地还没有内容，自动同步一次，避免用户以为"加完就坏了"
         viewModelScope.launch {
             runCatching {

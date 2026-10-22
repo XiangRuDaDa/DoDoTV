@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -64,11 +65,14 @@ import androidx.palette.graphics.Palette
 import android.graphics.Bitmap
 import androidx.core.graphics.drawable.toBitmap
 import coil.compose.AsyncImage
+import com.tabbit.myvidhub.data.scrape.ScrapeEngine
+import com.tabbit.myvidhub.data.scrape.ScrapeStrategy
 import com.tabbit.myvidhub.data.emby.EmbyClient
 import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.data.model.MediaKind
 import com.tabbit.myvidhub.data.model.SourceKind
 import com.tabbit.myvidhub.ui.LibraryViewModel
+import com.tabbit.myvidhub.ui.components.TmdbCreditLine
 import com.tabbit.myvidhub.ui.theme.AppColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -122,10 +126,16 @@ fun DetailScreen(
                 scraped = vm.embyDetailOf(m.sourceId, m.remoteId)
             }
 
-            // TMDB 刮削：补充海报/Logo/评分/演职员，所有来源都尝试
-            runCatching {
-                vm.tmdbScrape(m.title, m.year, m.kind)
-            }.getOrNull()?.let { tmdb = it }
+            // 刮削分流：凭据非空才发起 TMDB 请求。
+            // 在 LaunchedEffect 里重新判定一次（而不是读 ViewModel 的初始化快照），
+            // 这样用户在设置页刚填完密钥、不重启退回来也能立刻用上 TMDB。
+            // 凭据为空时 engine == LEGACY，完全沿用原有方案
+            // （Emby 自带元数据 / TVBox 返回字段），不发任何外部请求。
+            if (ScrapeStrategy.refresh() == ScrapeEngine.TMDB) {
+                runCatching {
+                    vm.tmdbScrape(m.title, m.year, m.kind)
+                }.getOrNull()?.let { tmdb = it }
+            }
 
             if (m.kind == MediaKind.SERIES) {
                 var eps = vm.episodesOf(m.seriesKey)
@@ -219,12 +229,16 @@ fun DetailScreen(
     }
 
     // 封面 → 填充色的渐变过渡：头图下方 45% 区间由封面逐渐溶解成整页填充色，两者之间没有硬边
+    // 头部遮罩：顶部压暗保证返回键可读 → 中段完全透明露出海报 → 底部主色逐渐加浓到不透明。
+    // 「颜色」和「透明度」同时插值，所以海报到页面背景是一条连续过渡，看不到硬边或色带。
     val headerScrim = remember(animatedTop) {
         Brush.verticalGradient(
-            0f to Color.Black.copy(alpha = 0.34f),
-            0.26f to Color.Transparent,
-            0.52f to animatedTop.copy(alpha = 0.30f),
-            0.76f to animatedTop.copy(alpha = 0.78f),
+            0f to Color.Black.copy(alpha = 0.42f),
+            0.30f to Color.Transparent,
+            0.50f to animatedTop.copy(alpha = 0.10f),
+            0.66f to animatedTop.copy(alpha = 0.34f),
+            0.82f to animatedTop.copy(alpha = 0.68f),
+            0.93f to animatedTop.copy(alpha = 0.90f),
             1f to animatedTop
         )
     }
@@ -251,14 +265,20 @@ fun DetailScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 32.dp)
             ) {
-                // ---------- 顶部海报（海报即头图，下方直接接影片信息） ----------
+                // ---------- 顶部海报：全宽沉浸头图，标题覆盖在海报下部 ----------
                 item {
+                    val screenH = LocalConfiguration.current.screenHeightDp.dp
+                    // 海报占屏高约 58%（TV 端 52%），比原来固定 320dp 明显更大
+                    val headerH = if (isTv) screenH * 0.52f else screenH * 0.58f
+
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .height(if (isTv) 360.dp else 320.dp)
+                            .height(headerH)
                     ) {
-                        val art = effectivePoster.ifBlank { item.backdropUrl.ifBlank { tmdb?.backdropUrl.orEmpty() } }
+                        val art = effectivePoster.ifBlank {
+                            item.backdropUrl.ifBlank { tmdb?.backdropUrl.orEmpty() }
+                        }
                         if (art.isNotBlank()) {
                             AsyncImage(
                                 model = art,
@@ -270,7 +290,7 @@ fun DetailScreen(
                             Box(Modifier.fillMaxSize().background(AppColors.Surface))
                         }
 
-                        // 海报底部 → 页面主色的渐变过渡：从海报色自然晕染到整页填充色，无硬边
+                        // 海报 → 页面主色：渐变 + 透明度双重过渡（不再有生硬截断）
                         Box(
                             Modifier
                                 .fillMaxSize()
@@ -291,56 +311,72 @@ fun DetailScreen(
                                 tint = Color.White
                             )
                         }
-                    }
-                }
 
-                // ---------- 标题 + 元信息（海报下方） ----------
-                item {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 18.dp)
-                            .padding(top = 6.dp, bottom = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(7.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        // 标题：优先用刮削到的 Logo 图，文字次之
-                        if (effectiveLogo.isNotBlank()) {
-                            AsyncImage(
-                                model = effectiveLogo,
-                                contentDescription = item.title,
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier
-                                    .height(56.dp)
-                                    .widthIn(max = 320.dp)
-                            )
-                        } else {
-                            Text(
-                                text = item.title,
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            )
-                        }
-                        val meta = detailMeta(item, effectiveRating)
-                        if (meta.isNotBlank()) {
-                            Text(
-                                text = meta,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = AppColors.TextSecondary
-                            )
-                        }
-                        if (effectiveGenres.isNotBlank()) {
-                            Text(
-                                text = effectiveGenres,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = AppColors.TextTertiary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                        // 标题覆盖层：水平居中、贴海报下沿（距底 16dp）
+                        Column(
+                            Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .padding(horizontal = 24.dp)
+                                .padding(bottom = 16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(7.dp)
+                        ) {
+                            // 标题：优先用刮削到的 Logo 图，文字次之
+                            if (effectiveLogo.isNotBlank()) {
+                                AsyncImage(
+                                    model = effectiveLogo,
+                                    contentDescription = item.title,
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .height(58.dp)
+                                        .widthIn(max = 300.dp)
+                                )
+                            } else {
+                                Text(
+                                    text = item.title,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+
+                            // 类型字段（电影 / 剧集，剧集额外带集数）+ 年份/评分
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TypeChip(if (item.kind == MediaKind.SERIES) "剧集" else "电影")
+                                if (item.kind == MediaKind.SERIES && visibleEpisodes.isNotEmpty()) {
+                                    TypeChip("共 ${visibleEpisodes.size} 集")
+                                }
+                                val meta = detailMeta(item, effectiveRating)
+                                if (meta.isNotBlank()) {
+                                    Text(
+                                        text = meta,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = Color.White.copy(alpha = 0.80f)
+                                    )
+                                }
+                            }
+
+                            if (effectiveGenres.isNotBlank()) {
+                                Text(
+                                    text = effectiveGenres,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White.copy(alpha = 0.62f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            // TMDB 使用条款要求的来源署名（有 TMDB 数据时才显示）
+                            if (tmdb != null) {
+                                TmdbCreditLine()
+                            }
                         }
                     }
                 }
@@ -594,12 +630,34 @@ private data class CastPerson(val name: String, val role: String, val imageUrl: 
 private fun EmbyClient.Person.toCast() = CastPerson(name, role, imageUrl)
 private fun com.tabbit.myvidhub.data.tmdb.TmdbClient.Person.toCast() = CastPerson(name, role, imageUrl)
 
+/**
+ * 年份 + 评分行。
+ * 注意这里不再输出「剧集」二字——标题区已经用 TypeChip 单独标了类型，
+ * 两处都写会出现「剧集 · 剧集」的重复。
+ */
 private fun detailMeta(item: MediaEntity, rating: Double = item.rating): String {
     val parts = mutableListOf<String>()
     if (item.year > 0) parts += item.year.toString()
-    if (item.kind == MediaKind.SERIES) parts += "剧集"
     if (rating > 0) parts += "★ %.1f".format(rating)
     return parts.joinToString("  ·  ")
+}
+
+/** 类型胶囊标签：电影 / 剧集 / 集数，半透明底叠在海报上仍清晰 */
+@Composable
+private fun TypeChip(label: String) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color.White.copy(alpha = 0.20f))
+            .padding(horizontal = 9.dp, vertical = 3.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            fontWeight = FontWeight.Medium
+        )
+    }
 }
 
 /** 演员卡：圆形头像 + 姓名 + 角色 */

@@ -19,6 +19,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -27,7 +28,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.tabbit.myvidhub.data.scrape.ScrapeStrategy
 import com.tabbit.myvidhub.core.Prefs
+import com.tabbit.myvidhub.ui.components.TmdbDisclaimer
 import com.tabbit.myvidhub.ui.LibraryViewModel
 import com.tabbit.myvidhub.ui.theme.AppColors
 
@@ -47,6 +50,16 @@ fun SettingsScreen(vm: LibraryViewModel) {
 
     var forceTv by remember { mutableStateOf(prefs.getBoolean(KEY_FORCE_TV, false)) }
     var tmdbKey by remember { mutableStateOf(Prefs.tmdbApiKey) }
+    var tmdbToken by remember { mutableStateOf(Prefs.tmdbReadToken) }
+
+    // 凭据变更计数：自增即触发重组，并重新判定刮削引擎
+    var engineTick by remember { mutableStateOf(0) }
+    // 只在记忆化里做纯计算（读凭据推导），不写全局状态
+    val activeEngine = remember(engineTick) { ScrapeStrategy.resolve() }
+    val activeEngineDesc = remember(activeEngine) { ScrapeStrategy.describe() }
+
+    // 写操作放到副作用里：凭据一变就同步给全局，供其他页面读取
+    LaunchedEffect(engineTick) { ScrapeStrategy.refresh() }
 
     Column(
         Modifier
@@ -104,25 +117,29 @@ fun SettingsScreen(vm: LibraryViewModel) {
         SettingCard(title = "刮削") {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    "TMDB API Key",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = AppColors.TextPrimary
-                )
-                Text(
-                    "填入后，详情页会自动从 TMDB 拉取海报、Logo、评分、简介与演职员。\n" +
-                        "前往 themoviedb.org 注册账号后在设置页申请免费 API Key。",
+                    "填入后，详情页会自动从 TMDB 拉取海报、背景图、艺术字 Logo、评分、简介与演职员。\n" +
+                        "前往 themoviedb.org 注册账号，在 Settings → API 里申请免费凭据（个人非商业用途免费）。",
                     style = MaterialTheme.typography.labelSmall,
                     color = AppColors.TextTertiary
+                )
+
+                // ---- 凭据一：API Key (v3) ----
+                Text(
+                    "API Key（v3 auth）",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = AppColors.TextPrimary
                 )
                 OutlinedTextField(
                     value = tmdbKey,
                     onValueChange = {
                         tmdbKey = it
                         Prefs.tmdbApiKey = it
+                        // 改动后立即重新判定：填了就走 TMDB，清空了立刻退回原有方案，无需重启
+                        engineTick++
                     },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    placeholder = { Text("粘贴 TMDB API Key (v3)") },
+                    placeholder = { Text("粘贴 API Key（32 位字符）") },
                     colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
                         focusedTextColor = AppColors.TextPrimary,
                         unfocusedTextColor = AppColors.TextSecondary,
@@ -130,7 +147,68 @@ fun SettingsScreen(vm: LibraryViewModel) {
                         unfocusedBorderColor = AppColors.SurfaceHi
                     )
                 )
+
+                // ---- 凭据二：Read Access Token (v4) ----
+                Text(
+                    "Read Access Token（v4 auth）",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = AppColors.TextPrimary
+                )
+                Text(
+                    "上面两项二选一即可，都留空则关闭 TMDB 刮削。\n" +
+                        "两项都填时优先用 v4 令牌，因为它通过请求头传递，密钥不会出现在 URL 里。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AppColors.TextTertiary
+                )
+                OutlinedTextField(
+                    value = tmdbToken,
+                    onValueChange = {
+                        tmdbToken = it
+                        Prefs.tmdbReadToken = it
+                        engineTick++
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("粘贴 Read Access Token（较长串）") },
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = AppColors.TextPrimary,
+                        unfocusedTextColor = AppColors.TextSecondary,
+                        focusedBorderColor = AppColors.Brand,
+                        unfocusedBorderColor = AppColors.SurfaceHi
+                    )
+                )
+
+                // ---- 当前生效状态 ----
+                val active = when {
+                    Prefs.tmdbReadToken.isNotBlank() -> "已配置（v4 令牌优先）"
+                    Prefs.tmdbApiKey.isNotBlank() -> "已配置（v3 Key）"
+                    else -> "未配置"
+                }
+                Text(
+                    "凭据状态：$active",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (Prefs.tmdbConfigured) AppColors.Brand else AppColors.TextTertiary
+                )
+                Text(
+                    "当前刮削方案：$activeEngineDesc",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (activeEngine == com.tabbit.myvidhub.data.scrape.ScrapeEngine.TMDB)
+                        AppColors.Brand else AppColors.TextSecondary
+                )
+                Text(
+                    if (activeEngine == com.tabbit.myvidhub.data.scrape.ScrapeEngine.TMDB)
+                        "已启用 TMDB 刮削：详情页会用 TMDB 的海报、艺术字 Logo、评分与简介补全元数据。"
+                    else
+                        "未填写凭据，继续使用原有刮削方案（Emby 自带元数据 / TVBox 返回字段），不发起外部请求。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AppColors.TextTertiary
+                )
             }
+        }
+
+        // ---------- TMDB 署名与免责声明 ----------
+        SettingCard(title = "数据来源与声明") {
+            TmdbDisclaimer()
         }
 
         // ---------- 关于 ----------
@@ -150,7 +228,8 @@ fun SettingsScreen(vm: LibraryViewModel) {
         }
 
         Text(
-            "播放器为自研实现，请仅用于播放你拥有合法权利的内容。",
+            "播放器为自研实现，请仅用于播放你拥有合法权利的内容。\n" +
+                "TMDB 数据按其使用条款用于个人非商业展示，应用内不得移除来源署名。",
             style = MaterialTheme.typography.labelSmall,
             color = AppColors.TextTertiary.copy(alpha = 0.7f)
         )

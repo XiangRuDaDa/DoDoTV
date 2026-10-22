@@ -14,9 +14,16 @@ import java.util.concurrent.TimeUnit
  * 作为 Emby 刮削的补充：TVBox 源本身没有元数据，Emby 源也可能刮削不全，
  * 这里用 TMDB 公开 API 按「标题 + 年份」搜索并拉取海报/背景图/Logo/评分/简介/演职员。
  *
- * 需要用户在设置里填入 TMDB API Key（v3）。没有 key 时所有方法返回 null，不影响原有流程。
+ * 认证支持两种凭据（设置页各有一个输入框，填任意一个即可）：
+ *   - API Key（v3 auth）        → 以 `?api_key=` 查询参数传递
+ *   - Read Access Token（v4）   → 以 `Authorization: Bearer` 请求头传递
+ * 两者都填时优先用 v4 令牌：密钥不会出现在 URL 与日志里，更安全。
+ * 未配置任何凭据时所有方法返回 null，不影响原有流程。
  */
-class TmdbClient(private val apiKey: String) {
+class TmdbClient(
+    private val apiKey: String,
+    private val readToken: String = ""
+) {
 
     /** 刮削结果：与 EmbyClient.ItemDetail 对齐，便于详情页统一渲染 */
     data class ScrapeResult(
@@ -38,13 +45,26 @@ class TmdbClient(private val apiKey: String) {
         .readTimeout(25, TimeUnit.SECONDS)
         .build()
 
+    /** 是否具备可用凭据 */
+    private val hasCredential: Boolean
+        get() = readToken.isNotBlank() || apiKey.isNotBlank()
+
     private fun get(path: String, params: Map<String, String> = emptyMap()): JSONObject? {
-        if (apiKey.isBlank()) return null
-        val url = StringBuilder("$BASE$path?api_key=$apiKey&language=zh-CN")
-        params.forEach { (k, v) -> url.append("&").append(k).append("=").append(v) }
-        val req = Request.Builder().url(url.toString())
+        if (!hasCredential) return null
+
+        // v4 令牌走 Bearer 头；否则把 v3 Key 拼进查询串
+        val useToken = readToken.isNotBlank()
+        val url = StringBuilder("$BASE$path?language=zh-CN")
+        if (!useToken) url.append("&api_key=").append(apiKey)
+        params.forEach { (k, v) ->
+            url.append("&").append(k).append("=")
+                .append(java.net.URLEncoder.encode(v, "UTF-8"))
+        }
+
+        val builder = Request.Builder().url(url.toString())
             .header("Accept", "application/json")
-            .build()
+        if (useToken) builder.header("Authorization", "Bearer $readToken")
+        val req = builder.build()
         return runCatching {
             http.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
@@ -61,7 +81,7 @@ class TmdbClient(private val apiKey: String) {
      */
     suspend fun scrape(title: String, year: Int, kind: String): ScrapeResult? =
         withContext(Dispatchers.IO) {
-            if (apiKey.isBlank() || title.isBlank()) return@withContext null
+            if (!hasCredential || title.isBlank()) return@withContext null
 
             val id = searchId(title, year, kind) ?: return@withContext null
             val isMovie = kind != "SERIES"

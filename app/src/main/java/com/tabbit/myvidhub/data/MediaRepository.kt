@@ -88,8 +88,9 @@ class MediaRepository(context: Context) {
     suspend fun tmdbScrape(title: String, year: Int, kind: String): TmdbClient.ScrapeResult? =
         withContext(Dispatchers.IO) {
             val key = Prefs.tmdbApiKey
-            if (key.isBlank()) return@withContext null
-            runCatching { TmdbClient(key).scrape(title, year, kind) }.getOrNull()
+            val token = Prefs.tmdbReadToken
+            if (key.isBlank() && token.isBlank()) return@withContext null
+            runCatching { TmdbClient(key, token).scrape(title, year, kind) }.getOrNull()
         }
 
     /** 类型标签：拆分聚合后按出现次数排序 */
