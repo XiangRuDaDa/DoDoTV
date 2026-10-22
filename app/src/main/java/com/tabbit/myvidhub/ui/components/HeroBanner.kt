@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,20 +34,23 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.ui.theme.AppColors
 import kotlinx.coroutines.delay
 
 /**
- * 首页顶部大图轮播（VidHub 的"精选"区）。
+ * 首页顶部大图轮播（VidHub 的「精选」区）。
  *
  * 视觉要点：
- * · 16:9 背景剧照铺满，由上到下渐变沉入页面底色，消除硬边界
- * · 左侧叠加一层横向渐变，让标题文字在任意亮度的剧照上都可读
- * · 每 6.5 秒自动切换，手指/遥控器也可手动滑动
+ * · 16:9 背景剧照铺满，渐变压暗后沉入页面底色，消除硬边界
+ * · 标题优先用刮削到的艺术字（ClearLogo，透明 PNG）；没有才回落到文字
+ * · 只保留「播放 / 详情」两个按钮，不再堆影片简介，画面更干净
+ * · 遮罩透明度整体调低，让剧照本身的色彩透出来，营造艺术氛围
  */
 @Composable
 fun HeroBanner(
@@ -92,25 +96,29 @@ fun HeroBanner(
                     Box(Modifier.fillMaxSize().background(AppColors.Surface))
                 }
 
-                // 纵向：顶部略暗 → 底部完全融入页面背景
+                // 纵向遮罩：顶部只轻微压暗保住白字，底部平滑融入页面底色。
+                // 相比原来的 0.35/0.55，这里降到 0.08/0.22，让剧照自身的色彩保留下来。
                 Box(
                     Modifier
                         .fillMaxSize()
                         .background(
                             Brush.verticalGradient(
-                                0f to Color.Black.copy(alpha = 0.35f),
-                                0.55f to Color.Black.copy(alpha = 0.55f),
+                                0f to Color.Black.copy(alpha = 0.08f),
+                                0.42f to Color.Black.copy(alpha = 0.20f),
+                                0.78f to Color.Black.copy(alpha = 0.46f),
                                 1f to AppColors.Bg
                             )
                         )
                 )
-                // 横向：左侧加深，保证文字对比度
+                // 横向遮罩：只在左侧给标题留一层薄纱，右侧完全放开，避免压死画面
                 Box(
                     Modifier
                         .fillMaxSize()
                         .background(
                             Brush.horizontalGradient(
-                                listOf(AppColors.Bg.copy(alpha = 0.9f), Color.Transparent)
+                                0f to AppColors.Bg.copy(alpha = 0.62f),
+                                0.45f to AppColors.Bg.copy(alpha = 0.14f),
+                                1f to Color.Transparent
                             )
                         )
                 )
@@ -119,38 +127,43 @@ fun HeroBanner(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .padding(start = 22.dp, end = 22.dp, bottom = 24.dp)
-                        .fillMaxWidth(if (isTv) 0.52f else 0.78f),
-                    verticalArrangement = Arrangement.spacedBy(9.dp)
+                        .fillMaxWidth(if (isTv) 0.52f else 0.82f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = item.title,
-                        style = MaterialTheme.typography.displaySmall,
-                        color = Color.White,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    // 标题：有刮削艺术字就用图，没有才用文字兜底
+                    if (item.logoUrl.isNotBlank()) {
+                        AsyncImage(
+                            model = item.logoUrl,
+                            contentDescription = item.title,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .height(if (isTv) 96.dp else 68.dp)
+                                .widthIn(max = if (isTv) 380.dp else 260.dp)
+                        )
+                    } else {
+                        Text(
+                            text = item.title,
+                            style = MaterialTheme.typography.displaySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 0.6.sp,
+                            color = Color.White,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
 
                     val meta = metaLine(item)
                     if (meta.isNotBlank()) {
                         Text(
                             text = meta,
                             style = MaterialTheme.typography.labelMedium,
-                            color = AppColors.TextSecondary
-                        )
-                    }
-
-                    if (item.overview.isNotBlank()) {
-                        Text(
-                            text = item.overview,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = AppColors.TextSecondary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
+                            color = Color.White.copy(alpha = 0.72f),
+                            letterSpacing = 1.2.sp
                         )
                     }
 
                     Row(
-                        Modifier.padding(top = 4.dp),
+                        Modifier.padding(top = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Button(
@@ -199,7 +212,9 @@ fun HeroBanner(
 private fun metaLine(item: MediaEntity): String {
     val parts = mutableListOf<String>()
     if (item.year > 0) parts += item.year.toString()
-    if (item.genres.isNotBlank()) parts += item.genres
     if (item.rating > 0) parts += "★ %.1f".format(item.rating)
+    if (item.genres.isNotBlank()) {
+        parts += item.genres.split(",", "/", " ", "，").first().trim()
+    }
     return parts.joinToString("  ·  ")
 }

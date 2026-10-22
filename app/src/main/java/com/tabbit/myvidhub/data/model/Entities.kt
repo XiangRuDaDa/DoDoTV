@@ -61,6 +61,8 @@ data class MediaEntity(
     val overview: String = "",
     val posterUrl: String = "",
     val backdropUrl: String = "",
+    /** 刮削的艺术字标题（Emby Logo 图），为空时界面回落到纯文字标题 */
+    val logoUrl: String = "",
     val rating: Double = 0.0,
     val genres: String = "",
     val durationMs: Long = 0L,

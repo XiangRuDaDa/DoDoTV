@@ -10,7 +10,7 @@ import com.tabbit.myvidhub.data.model.SourceEntity
 
 @Database(
     entities = [SourceEntity::class, MediaEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

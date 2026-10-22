@@ -207,9 +207,9 @@ fun TvMoreButton(onClick: () -> Unit) {
 
 /** 空状态提示 */
 @Composable
-fun TvEmptyState(text: String, hint: String? = null) {
+fun TvEmptyState(text: String, hint: String? = null, modifier: Modifier = Modifier) {
     Column(
-        Modifier
+        modifier
             .fillMaxSize()
             .padding(48.dp),
         verticalArrangement = Arrangement.Center,

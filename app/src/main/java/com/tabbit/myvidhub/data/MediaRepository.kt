@@ -170,6 +170,7 @@ class MediaRepository(context: Context) {
                         overview = item.overview,
                         posterUrl = item.posterUrl,
                         backdropUrl = item.backdropUrl,
+                        logoUrl = item.logoUrl,
                         rating = item.rating,
                         genres = item.genres,
                         durationMs = item.runTimeMs
@@ -209,7 +210,8 @@ class MediaRepository(context: Context) {
                         overview = ep.overview,
                         durationMs = ep.runTimeMs,
                         posterUrl = ep.posterUrl,
-                        backdropUrl = shell.backdropUrl
+                        backdropUrl = shell.backdropUrl,
+                        logoUrl = shell.logoUrl
                     )
                 )
             }

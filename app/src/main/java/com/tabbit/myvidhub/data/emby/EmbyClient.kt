@@ -63,6 +63,7 @@ class EmbyClient(
         val overview: String,
         val posterUrl: String,
         val backdropUrl: String,
+        val logoUrl: String = "",
         val rating: Double,
         val genres: String,
         val runTimeMs: Long,
@@ -292,6 +293,7 @@ class EmbyClient(
             val backdropTags = o.optJSONObject("BackdropImageTags")
 
             val primaryTag = imageTags?.optString("Primary").orEmpty()
+            val logoTag = imageTags?.optString("Logo").orEmpty()
             val backdropTag = backdropTags?.let {
                 if (it.length() > 0) it.optString(it.keys().next()) else ""
             }.orEmpty()
@@ -306,6 +308,9 @@ class EmbyClient(
                     imageUrl("/Items/$id/Images/Primary", primaryTag, "maxHeight=600&quality=90") else "",
                 backdropUrl = if (backdropTag.isNotBlank())
                     imageUrl("/Items/$id/Images/Backdrop", backdropTag, "maxWidth=1280&quality=90") else "",
+                // 透明 PNG，maxHeight 给足以保证电视端大屏下不糊
+                logoUrl = if (logoTag.isNotBlank())
+                    imageUrl("/Items/$id/Images/Logo", logoTag, "maxHeight=400&quality=90") else "",
                 rating = o.optDouble("CommunityRating", 0.0),
                 genres = o.optJSONArray("Genres")?.let { g ->
                     (0 until g.length()).mapNotNull { g.optString(it).takeIf { s -> s.isNotBlank() } }

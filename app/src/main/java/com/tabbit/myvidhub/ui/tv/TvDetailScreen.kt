@@ -74,6 +74,9 @@ fun TvDetailScreen(
 
     LaunchedEffect(mediaId) {
         loading = true
+        // 整个加载过程兜底：任何 IO/解析异常都不允许冒泡到 Composition，
+        // 否则电视端会直接崩溃退出（用户看到的就是「点详情闪退」）。
+        try {
         val m = vm.mediaOf(mediaId)
         media = m
         if (m != null) {
@@ -90,7 +93,11 @@ fun TvDetailScreen(
             media = latest
             episodes = runCatching { vm.episodesOf(latest.seriesKey) }.getOrDefault(emptyList())
         }
-        loading = false
+        } catch (e: Throwable) {
+            e.printStackTrace()
+        } finally {
+            loading = false
+        }
     }
 
     val item = media
@@ -193,7 +200,15 @@ fun TvDetailScreen(
             // ---------- 左侧海报 + 右侧信息 ----------
             item {
                 if (item == null) {
-                    if (loading) TvEmptyState("加载中…") else TvEmptyState("找不到该内容")
+                    // 注意：这里在 LazyColumn 的 item 内，高度约束是无限的。
+                    // 若让 TvEmptyState 用 fillMaxSize，会抛
+                    // "Can't represent a size of 2147483647 in Constraints" 导致进页即闪退。
+                    val boxMod = Modifier.fillMaxWidth().height(420.dp)
+                    if (loading) {
+                        TvEmptyState("加载中…", modifier = boxMod)
+                    } else {
+                        TvEmptyState("找不到该内容", modifier = boxMod)
+                    }
                 } else {
                     Row(
                         Modifier
