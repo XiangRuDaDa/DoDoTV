@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -125,20 +126,21 @@ fun HeroBanner(
 
                 Column(
                     modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(start = 22.dp, end = 22.dp, bottom = 24.dp)
-                        .fillMaxWidth(if (isTv) 0.52f else 0.82f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(start = 22.dp, end = 22.dp, bottom = 28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // 标题：有刮削艺术字就用图，没有才用文字兜底
+                    // 标题：有刮削艺术字（ClearLogo）就用图，没有才用文字兜底
                     if (item.logoUrl.isNotBlank()) {
                         AsyncImage(
                             model = item.logoUrl,
                             contentDescription = item.title,
                             contentScale = ContentScale.Fit,
                             modifier = Modifier
-                                .height(if (isTv) 96.dp else 68.dp)
-                                .widthIn(max = if (isTv) 380.dp else 260.dp)
+                                .height(if (isTv) 100.dp else 72.dp)
+                                .widthIn(max = if (isTv) 420.dp else 300.dp)
                         )
                     } else {
                         Text(
@@ -148,7 +150,8 @@ fun HeroBanner(
                             letterSpacing = 0.6.sp,
                             color = Color.White,
                             maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
                     }
 
@@ -157,32 +160,48 @@ fun HeroBanner(
                         Text(
                             text = meta,
                             style = MaterialTheme.typography.labelMedium,
-                            color = Color.White.copy(alpha = 0.72f),
-                            letterSpacing = 1.2.sp
+                            color = Color.White.copy(alpha = 0.78f),
+                            letterSpacing = 1.2.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
                     }
 
                     Row(
-                        Modifier.padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        Modifier.padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        // 主按钮：品牌色实底 + 阴影，视觉最突出
                         Button(
                             onClick = { onPlay(item) },
+                            shape = RoundedCornerShape(24.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = AppColors.Brand,
                                 contentColor = Color.White
-                            )
+                            ),
+                            contentPadding = PaddingValues(horizontal = 26.dp, vertical = 10.dp)
                         ) {
                             Icon(
                                 Icons.Filled.PlayArrow,
                                 contentDescription = null,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                             Spacer(Modifier.width(6.dp))
-                            Text("播放")
+                            Text("播放", fontWeight = FontWeight.SemiBold)
                         }
-                        OutlinedButton(onClick = { onOpen(item) }) {
-                            Text("详情")
+                        // 次按钮：半透明白底玻璃风，与主按钮形成层级
+                        OutlinedButton(
+                            onClick = { onOpen(item) },
+                            shape = RoundedCornerShape(24.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = Color.White.copy(alpha = 0.14f),
+                                contentColor = Color.White
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp, Color.White.copy(alpha = 0.35f)
+                            ),
+                            contentPadding = PaddingValues(horizontal = 26.dp, vertical = 10.dp)
+                        ) {
+                            Text("详情", fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }

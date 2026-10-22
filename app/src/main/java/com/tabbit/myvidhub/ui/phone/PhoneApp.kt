@@ -10,12 +10,15 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -33,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.ui.LibraryViewModel
 import com.tabbit.myvidhub.ui.detail.DetailScreen
@@ -94,13 +98,17 @@ fun PhoneApp(vm: LibraryViewModel) {
         snackbarHost = { SnackbarHost(snackbarHost) },
         containerColor = AppColors.Bg,
         bottomBar = {
-            NavigationBar(containerColor = AppColors.Surface) {
+            NavigationBar(
+                containerColor = AppColors.Surface,
+                tonalElevation = 0.dp,
+                modifier = Modifier.height(52.dp)
+            ) {
                 PhoneTab.entries.forEach { t ->
                     NavigationBarItem(
                         selected = currentTab == t,
                         onClick = { route = t.route() },
-                        icon = { Icon(t.icon, contentDescription = t.label) },
-                        label = { Text(t.label) },
+                        icon = { Icon(t.icon, contentDescription = t.label, modifier = Modifier.size(20.dp)) },
+                        label = { Text(t.label, style = MaterialTheme.typography.labelSmall) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = AppColors.Brand,
                             selectedTextColor = AppColors.Brand,

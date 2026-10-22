@@ -229,30 +229,27 @@ fun DetailScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 32.dp)
             ) {
-                // ---------- 头图 ----------
+                // ---------- 顶部海报（海报即头图，下方直接接影片信息） ----------
                 item {
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .height(if (isTv) 340.dp else 300.dp)
+                            .height(if (isTv) 360.dp else 320.dp)
                     ) {
-                        val art = item.backdropUrl.ifBlank { item.posterUrl }
+                        val art = item.posterUrl.ifBlank { item.backdropUrl }
                         if (art.isNotBlank()) {
                             AsyncImage(
                                 model = art,
                                 contentDescription = item.title,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
-                                onSuccess = { state ->
-                                    // 头图先给一个基调，海报加载完会覆盖成更准确的聚焦色
-                                    if (dominantColor == Color.Unspecified) extract(art, state)
-                                }
+                                onSuccess = { state -> extract(art, state) }
                             )
                         } else {
                             Box(Modifier.fillMaxSize().background(AppColors.Surface))
                         }
 
-                        // 头图底部渐变到整页底色：与页面背景同色，接缝完全消失
+                        // 海报底部 → 页面主色的渐变过渡：从海报色自然晕染到整页填充色，无硬边
                         Box(
                             Modifier
                                 .fillMaxSize()
@@ -273,65 +270,42 @@ fun DetailScreen(
                                 tint = Color.White
                             )
                         }
+                    }
+                }
 
-                        // 海报 + 文字信息
-                        Row(
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(horizontal = 18.dp)
-                                .padding(bottom = 14.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            val posterShape = RoundedCornerShape(10.dp)
-                            Box(
-                                Modifier
-                                    .width(if (isTv) 116.dp else 96.dp)
-                                    .height(if (isTv) 174.dp else 144.dp)
-                                    .clip(posterShape)
-                                    .background(AppColors.Surface)
-                                    .border(1.dp, Color.White.copy(alpha = 0.08f), posterShape)
-                            ) {
-                                if (item.posterUrl.isNotBlank()) {
-                                    AsyncImage(
-                                        model = item.posterUrl,
-                                        contentDescription = item.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize(),
-                                        onSuccess = { state -> extract(item.posterUrl, state) }
-                                    )
-                                }
-                            }
-
-                            Column(
-                                Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(7.dp)
-                            ) {
-                                Text(
-                                    text = item.title,
-                                    style = MaterialTheme.typography.headlineSmall,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                val meta = detailMeta(item)
-                                if (meta.isNotBlank()) {
-                                    Text(
-                                        text = meta,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = AppColors.TextSecondary
-                                    )
-                                }
-                                if (item.genres.isNotBlank()) {
-                                    Text(
-                                        text = item.genres,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = AppColors.TextTertiary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
+                // ---------- 标题 + 元信息（海报下方） ----------
+                item {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp)
+                            .padding(top = 6.dp, bottom = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(7.dp)
+                    ) {
+                        Text(
+                            text = item.title,
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        val meta = detailMeta(item)
+                        if (meta.isNotBlank()) {
+                            Text(
+                                text = meta,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = AppColors.TextSecondary
+                            )
+                        }
+                        if (item.genres.isNotBlank()) {
+                            Text(
+                                text = item.genres,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = AppColors.TextTertiary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }

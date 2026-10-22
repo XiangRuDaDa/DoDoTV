@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -114,20 +115,7 @@ fun TvHomeScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 44.dp)
         ) {
-            // ---------- 顶部入口条 ----------
-            item {
-                TvTopBar(
-                    count = library.size,
-                    sourceCount = sources.size,
-                    scanning = vm.scanning,
-                    onSearch = onSearch,
-                    onSources = onSources,
-                    onSettings = onSettings,
-                    onRefresh = { vm.scanAll() }
-                )
-            }
-
-            // ---------- 主视觉 ----------
+            // ---------- 主视觉（置顶，顶部入口条悬浮其上） ----------
             if (hero != null) {
                 item {
                     TvHero(
@@ -194,6 +182,17 @@ fun TvHomeScreen(
                 item { TvPosterRow(items = recentAnime, onDetail = onDetail) }
             }
         }
+
+        // ---------- 透明悬浮顶部入口条（压在主视觉之上） ----------
+        TvTopBar(
+            count = library.size,
+            sourceCount = sources.size,
+            scanning = vm.scanning,
+            onSearch = onSearch,
+            onSources = onSources,
+            onSettings = onSettings,
+            onRefresh = { vm.scanAll() }
+        )
     }
 }
 
@@ -217,13 +216,13 @@ private fun TvTopBar(
         Column(Modifier.weight(1f)) {
             Text(
                 "DouDouTV",
-                color = AppColors.TextPrimary,
+                color = Color.White,
                 style = MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.Bold
             )
             Text(
                 if (scanning) "同步中…" else "$count 个条目 · $sourceCount 个来源",
-                color = AppColors.TextTertiary,
+                color = Color.White.copy(alpha = 0.72f),
                 style = MaterialTheme.typography.bodyMedium
             )
         }
@@ -287,32 +286,50 @@ private fun TvHero(
 
         Column(
             Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 44.dp, bottom = 40.dp)
-                .width(620.dp)
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(start = 44.dp, end = 44.dp, bottom = 44.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
-                item.title,
-                color = Color.White,
-                style = MaterialTheme.typography.displaySmall,
-                fontWeight = FontWeight.Bold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(Modifier.height(10.dp))
-            TvMetaRow(item)
-            if (item.overview.isNotBlank()) {
-                Spacer(Modifier.height(12.dp))
+            // 标题：优先用刮削到的 ClearLogo（透明 PNG 艺术字），没有才回落文字
+            if (item.logoUrl.isNotBlank()) {
+                AsyncImage(
+                    model = item.logoUrl,
+                    contentDescription = item.title,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .height(96.dp)
+                        .widthIn(max = 460.dp)
+                )
+            } else {
                 Text(
-                    item.overview,
-                    color = Color.White.copy(alpha = 0.78f),
-                    style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
+                    item.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
             }
-            Spacer(Modifier.height(22.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Spacer(Modifier.height(12.dp))
+            Box(Modifier.fillMaxWidth(0.62f)) {
+                TvMetaRow(item, modifier = Modifier.align(Alignment.Center))
+            }
+            if (item.overview.isNotBlank()) {
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    item.overview,
+                    color = Color.White.copy(alpha = 0.82f),
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(0.7f)
+                )
+            }
+            Spacer(Modifier.height(24.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 TvPillButton(
                     text = if (item.positionMs > 5_000L) "继续播放" else "立即播放",
                     modifier = Modifier.focusRequester(focusRequester),

@@ -17,11 +17,23 @@ import com.tabbit.myvidhub.ui.theme.AppColors
 /**
  * 从封面提取"聚焦色"。
  *
- * 优先取饱和度较高的色块（vibrant / lightVibrant / muted / ...），
- * 并给饱和度、亮度设下限，避免暗色海报提取出来仍然是黑色。
- * 灰度封面提取不到色相时退回品牌色，保证页面总有色调。
+ * 首选策略：用 Canvas 像素采样取海报**中心 60% 区域**的平均色。
+ * 中心区域通常是海报主角/主视觉所在，平均色最能代表这张图的主色调。
+ * 若中心色饱和度过低（接近黑白灰），再回落 Palette 的 vibrant/muted 色块，
+ * 最后兜底整图平均色。全程给饱和度、亮度设下限，避免暗色海报取出来还是黑。
  */
 internal fun focusColorOf(bitmap: Bitmap): Color {
+    // 1) 中心区域平均色
+    val centerArgb = centerAverageColorOf(bitmap)
+    val centerHsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(centerArgb, centerHsv)
+    if (centerHsv[1] >= 0.12f) {
+        centerHsv[1] = centerHsv[1].coerceIn(0.40f, 0.90f)
+        centerHsv[2] = centerHsv[2].coerceIn(0.45f, 0.82f)
+        return Color(android.graphics.Color.HSVToColor(centerHsv))
+    }
+
+    // 2) Palette 色块（饱和度通常更足）
     val palette = runCatching { Palette.from(bitmap).generate() }.getOrNull()
     val swatch = listOfNotNull(
         palette?.vibrantSwatch,
@@ -42,7 +54,41 @@ internal fun focusColorOf(bitmap: Bitmap): Color {
     return Color(android.graphics.Color.HSVToColor(hsv))
 }
 
-/** Palette 失败时的兜底：按步长采样求平均色 */
+/**
+ * 取海报中心 60% 区域的像素平均色。
+ * 用 Bitmap.getPixel 逐点采样（等价于 Canvas draw 后读像素），按 12x12 步长采样，
+ * 避免对大图做昂贵的全像素遍历。
+ */
+private fun centerAverageColorOf(bitmap: Bitmap): Int {
+    val cx = bitmap.width / 2
+    val cy = bitmap.height / 2
+    val halfW = (bitmap.width * 0.30f).toInt().coerceAtLeast(1)
+    val halfH = (bitmap.height * 0.30f).toInt().coerceAtLeast(1)
+    var r = 0L; var g = 0L; var b = 0L; var n = 0L
+    val stepX = (halfW / 12).coerceAtLeast(1)
+    val stepY = (halfH / 12).coerceAtLeast(1)
+    val xStart = (cx - halfW).coerceAtLeast(0)
+    val xEnd = (cx + halfW).coerceAtMost(bitmap.width)
+    val yStart = (cy - halfH).coerceAtLeast(0)
+    val yEnd = (cy + halfH).coerceAtMost(bitmap.height)
+    var y = yStart
+    while (y < yEnd) {
+        var x = xStart
+        while (x < xEnd) {
+            val p = bitmap.getPixel(x, y)
+            r += android.graphics.Color.red(p)
+            g += android.graphics.Color.green(p)
+            b += android.graphics.Color.blue(p)
+            n++
+            x += stepX
+        }
+        y += stepY
+    }
+    if (n == 0L) return AppColors.Brand.toArgb()
+    return android.graphics.Color.rgb((r / n).toInt(), (g / n).toInt(), (b / n).toInt())
+}
+
+/** Palette 失败时的兜底：整图按步长采样求平均色 */
 private fun averageColorOf(bitmap: Bitmap): Int {
     var r = 0L
     var g = 0L

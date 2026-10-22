@@ -94,70 +94,33 @@ fun HomeScreen(
         else (primary + library.filter { it.posterUrl.isNotBlank() }).distinctBy { it.id }.take(6)
     }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            // 顶部氛围渐变：让页面不是纯黑底，视觉更丰富
-            .background(
-                Brush.verticalGradient(
-                    0f to AppColors.Brand.copy(alpha = 0.09f),
-                    0.22f to AppColors.Bg,
-                    1f to AppColors.Bg
-                )
-            ),
-        contentPadding = PaddingValues(bottom = 28.dp)
-    ) {
-        // ---------- 顶栏 ----------
-        item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, end = 10.dp, top = 14.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "DouDouTV",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = AppColors.TextPrimary,
-                        fontWeight = FontWeight.Bold
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                // 顶部氛围渐变：让页面不是纯黑底，视觉更丰富
+                .background(
+                    Brush.verticalGradient(
+                        0f to AppColors.Brand.copy(alpha = 0.09f),
+                        0.22f to AppColors.Bg,
+                        1f to AppColors.Bg
                     )
-                    Text(
-                        if (vm.scanning) vm.scanMessage.ifBlank { "同步中…" }
-                        else "${library.size} 个条目 · ${vm.sources.value.size} 个来源",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = AppColors.TextTertiary
+                ),
+            contentPadding = PaddingValues(bottom = 28.dp)
+        ) {
+            // ---------- 精选大图（置顶，顶栏悬浮其上） ----------
+            if (heroItems.isNotEmpty()) {
+                item {
+                    HeroBanner(
+                        items = heroItems,
+                        isTv = isTv,
+                        onOpen = { onOpenDetail(it.id) },
+                        onPlay = { onPlay(it) }
                     )
                 }
-                IconButton(onClick = onOpenSearch) {
-                    Icon(Icons.Filled.Search, contentDescription = "搜索", tint = AppColors.TextSecondary)
-                }
-                if (vm.scanning) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.padding(8.dp).width(20.dp),
-                        strokeWidth = 2.dp
-                    )
-                } else {
-                    IconButton(onClick = { vm.scanAll() }) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "同步", tint = AppColors.TextSecondary)
-                    }
-                }
+            } else if (library.isEmpty()) {
+                item { EmptyState(vm) }
             }
-        }
-
-        // ---------- 精选大图 ----------
-        if (heroItems.isNotEmpty()) {
-            item {
-                HeroBanner(
-                    items = heroItems,
-                    isTv = isTv,
-                    onOpen = { onOpenDetail(it.id) },
-                    onPlay = { onPlay(it) }
-                )
-            }
-        } else if (library.isEmpty()) {
-            item { EmptyState(vm) }
-        }
 
         // ---------- 继续观看 ----------
         if (continueList.isNotEmpty()) {
@@ -213,6 +176,45 @@ fun HomeScreen(
             onMore = { onOpenGenre(null, "动漫") },
             onOpenDetail = onOpenDetail
         )
+        }
+
+        // ---------- 透明悬浮顶栏（压在轮播图之上） ----------
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 10.dp, top = 14.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "DouDouTV",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    if (vm.scanning) vm.scanMessage.ifBlank { "同步中…" }
+                    else "${library.size} 个条目 · ${vm.sources.value.size} 个来源",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.72f)
+                )
+            }
+            IconButton(onClick = onOpenSearch) {
+                Icon(Icons.Filled.Search, contentDescription = "搜索", tint = Color.White)
+            }
+            if (vm.scanning) {
+                CircularProgressIndicator(
+                    modifier = Modifier.padding(8.dp).width(20.dp),
+                    strokeWidth = 2.dp,
+                    color = Color.White
+                )
+            } else {
+                IconButton(onClick = { vm.scanAll() }) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "同步", tint = Color.White)
+                }
+            }
+        }
     }
 }
 
