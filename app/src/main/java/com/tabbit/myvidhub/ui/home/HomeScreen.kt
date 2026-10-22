@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.data.model.MediaKind
@@ -183,7 +184,7 @@ fun HomeScreen(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .fillMaxWidth()
-                .padding(start = 20.dp, end = 10.dp, top = 14.dp, bottom = 6.dp),
+                .padding(start = 20.dp, end = 10.dp, top = 8.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
@@ -191,7 +192,8 @@ fun HomeScreen(
                     "DouDouTV",
                     style = MaterialTheme.typography.headlineMedium,
                     color = Color.White,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 1.5.sp
                 )
                 Text(
                     if (vm.scanning) vm.scanMessage.ifBlank { "同步中…" }

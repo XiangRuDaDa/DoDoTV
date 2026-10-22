@@ -204,25 +204,22 @@ fun HeroBanner(
                             Text("详情", fontWeight = FontWeight.SemiBold)
                         }
                     }
-                }
-            }
-        }
 
-        // 页码指示点
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(18.dp),
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            repeat(items.size) { i ->
-                val active = pagerState.currentPage == i
-                Box(
-                    Modifier
-                        .size(width = if (active) 16.dp else 6.dp, height = 6.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(if (active) AppColors.Brand else Color.White.copy(alpha = 0.35f))
-                )
+                    // 页码指示点：居中放在按钮下方
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        repeat(items.size) { i ->
+                            val active = pagerState.currentPage == i
+                            Box(
+                                Modifier
+                                    .size(width = if (active) 16.dp else 6.dp, height = 6.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(if (active) AppColors.Brand else Color.White.copy(alpha = 0.35f))
+                            )
+                        }
+                    }
+                }
             }
         }
     }

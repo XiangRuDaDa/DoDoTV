@@ -239,6 +239,10 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun embyDetailOf(sourceId: Long, remoteId: String): EmbyClient.ItemDetail? =
         repo.embyDetail(sourceId, remoteId)
 
+    /** TMDB 刮削（海报/背景图/Logo/评分/简介/演职员），未配置 API Key 时返回 null */
+    suspend fun tmdbScrape(title: String, year: Int, kind: String): com.tabbit.myvidhub.data.tmdb.TmdbClient.ScrapeResult? =
+        repo.tmdbScrape(title, year, kind)
+
     // ---------- 扫描 ----------
 
     fun scanAll() {

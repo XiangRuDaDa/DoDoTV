@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -26,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.tabbit.myvidhub.core.Prefs
 import com.tabbit.myvidhub.ui.LibraryViewModel
 import com.tabbit.myvidhub.ui.theme.AppColors
 
@@ -44,6 +46,7 @@ fun SettingsScreen(vm: LibraryViewModel) {
     val prefs = remember { ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
 
     var forceTv by remember { mutableStateOf(prefs.getBoolean(KEY_FORCE_TV, false)) }
+    var tmdbKey by remember { mutableStateOf(Prefs.tmdbApiKey) }
 
     Column(
         Modifier
@@ -97,10 +100,43 @@ fun SettingsScreen(vm: LibraryViewModel) {
             }
         }
 
+        // ---------- 刮削 ----------
+        SettingCard(title = "刮削") {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "TMDB API Key",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = AppColors.TextPrimary
+                )
+                Text(
+                    "填入后，详情页会自动从 TMDB 拉取海报、Logo、评分、简介与演职员。\n" +
+                        "前往 themoviedb.org 注册账号后在设置页申请免费 API Key。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AppColors.TextTertiary
+                )
+                OutlinedTextField(
+                    value = tmdbKey,
+                    onValueChange = {
+                        tmdbKey = it
+                        Prefs.tmdbApiKey = it
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("粘贴 TMDB API Key (v3)") },
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = AppColors.TextPrimary,
+                        unfocusedTextColor = AppColors.TextSecondary,
+                        focusedBorderColor = AppColors.Brand,
+                        unfocusedBorderColor = AppColors.SurfaceHi
+                    )
+                )
+            }
+        }
+
         // ---------- 关于 ----------
         SettingCard(title = "关于") {
             Text(
-                "DouDouTV 2.0\n\n" +
+                "DouDouTV 2.2\n\n" +
                     "一个自研的安卓个人媒体中心，手机与电视共用一个安装包。\n\n" +
                     "· 播放内核 Media3 / ExoPlayer，支持 MKV、HEVC、HLS 等主流格式\n" +
                     "· Emby 直连：静态直传原码流，局域网不转码\n" +

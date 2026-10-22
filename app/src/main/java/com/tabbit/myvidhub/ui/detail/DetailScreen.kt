@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -54,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -101,11 +103,16 @@ fun DetailScreen(
     /** Emby 刮削信息（导演/演员/分级/工作室） */
     var scraped by remember { mutableStateOf<EmbyClient.ItemDetail?>(null) }
 
+    /** TMDB 刮削信息（海报/背景图/Logo/评分/简介/演职员），作为 Emby 的补充 */
+    var tmdb by remember { mutableStateOf<com.tabbit.myvidhub.data.tmdb.TmdbClient.ScrapeResult?>(null) }
+
     /** 海报主色：驱动整页背景渐变，营造沉浸感 */
     var dominantColor by remember { mutableStateOf(Color.Unspecified) }
 
     LaunchedEffect(mediaId) {
         loading = true
+        scraped = null
+        tmdb = null
         val m = vm.mediaOf(mediaId)
         media = m
 
@@ -114,6 +121,11 @@ fun DetailScreen(
             if (vm.sourceOf(m.sourceId)?.kind == SourceKind.EMBY) {
                 scraped = vm.embyDetailOf(m.sourceId, m.remoteId)
             }
+
+            // TMDB 刮削：补充海报/Logo/评分/演职员，所有来源都尝试
+            runCatching {
+                vm.tmdbScrape(m.title, m.year, m.kind)
+            }.getOrNull()?.let { tmdb = it }
 
             if (m.kind == MediaKind.SERIES) {
                 var eps = vm.episodesOf(m.seriesKey)
@@ -142,6 +154,28 @@ fun DetailScreen(
             }
         }
         loading = false
+    }
+
+    // 取色：用 Coil ImageLoader 直接解码海报 bitmap（比 AsyncImage.onSuccess 里取 drawable 更可靠）。
+    // 任何环节失败都回退到「标题哈希色」，保证页面背景永远有色、不会是纯黑。
+    val context = LocalContext.current
+    LaunchedEffect(media?.posterUrl, media?.backdropUrl) {
+        val m = media ?: return@LaunchedEffect
+        val url = m.posterUrl.ifBlank { m.backdropUrl }
+        if (url.isBlank()) {
+            dominantColor = fallbackColorFromTitle(m.title)
+            return@LaunchedEffect
+        }
+        val cached = FocusColorCache.get(url)
+        if (cached != null) {
+            dominantColor = cached
+            return@LaunchedEffect
+        }
+        val bmp = withContext(Dispatchers.Default) { loadPosterBitmap(context, url) }
+        val color = bmp?.let { runCatching { focusColorOf(it) }.getOrNull() }
+            ?: fallbackColorFromTitle(m.title)
+        FocusColorCache.put(url, color)
+        dominantColor = color
     }
 
     val seasons = remember(episodes) { episodes.map { it.season }.distinct().sorted() }
@@ -196,25 +230,6 @@ fun DetailScreen(
     }
 
     Box(Modifier.fillMaxSize().background(bgBrush)) {
-        // 封面加载完成后在后台提取聚焦色（缩略图采样 160px，耗时约几毫秒，主线程无感）
-        val scope = rememberCoroutineScope()
-        // 同一次进入详情页，记录最近一次成功提取的色，避免头图/海报互相覆盖导致闪烁
-        var lastApplied by remember { mutableStateOf(Color.Unspecified) }
-        val extract: (String, coil.compose.AsyncImagePainter.State.Success) -> Unit = remember {
-            { url, state ->
-                scope.launch {
-                    val color = withContext(Dispatchers.Default) {
-                        FocusColorCache.get(url) ?: runCatching {
-                            focusColorOf(state.result.drawable.toBitmap(160, 160))
-                        }.getOrNull()?.also { FocusColorCache.put(url, it) }
-                    }
-                    if (color != null && color != Color.Unspecified && color != lastApplied) {
-                        lastApplied = color
-                        dominantColor = color
-                    }
-                }
-            }
-        }
         if (loading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = AppColors.Brand)
@@ -225,6 +240,13 @@ fun DetailScreen(
             }
         } else {
             val item = media!!
+            // 合并 Emby / TMDB 刮削结果：优先用条目本身字段，空了再用 TMDB 补齐
+            val effectiveLogo = item.logoUrl.ifBlank { tmdb?.logoUrl.orEmpty() }
+            val effectivePoster = item.posterUrl.ifBlank { tmdb?.posterUrl.orEmpty() }
+            val effectiveOverview = item.overview.ifBlank { tmdb?.overview.orEmpty() }
+            val effectiveRating = if (item.rating > 0) item.rating else tmdb?.rating ?: 0.0
+            val effectiveGenres = item.genres.ifBlank { tmdb?.genres.orEmpty() }
+
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 32.dp)
@@ -236,14 +258,13 @@ fun DetailScreen(
                             .fillMaxWidth()
                             .height(if (isTv) 360.dp else 320.dp)
                     ) {
-                        val art = item.posterUrl.ifBlank { item.backdropUrl }
+                        val art = effectivePoster.ifBlank { item.backdropUrl.ifBlank { tmdb?.backdropUrl.orEmpty() } }
                         if (art.isNotBlank()) {
                             AsyncImage(
                                 model = art,
                                 contentDescription = item.title,
                                 contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize(),
-                                onSuccess = { state -> extract(art, state) }
+                                modifier = Modifier.fillMaxSize()
                             )
                         } else {
                             Box(Modifier.fillMaxSize().background(AppColors.Surface))
@@ -280,17 +301,31 @@ fun DetailScreen(
                             .fillMaxWidth()
                             .padding(horizontal = 18.dp)
                             .padding(top = 6.dp, bottom = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(7.dp)
+                        verticalArrangement = Arrangement.spacedBy(7.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text(
-                            text = item.title,
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        val meta = detailMeta(item)
+                        // 标题：优先用刮削到的 Logo 图，文字次之
+                        if (effectiveLogo.isNotBlank()) {
+                            AsyncImage(
+                                model = effectiveLogo,
+                                contentDescription = item.title,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .height(56.dp)
+                                    .widthIn(max = 320.dp)
+                            )
+                        } else {
+                            Text(
+                                text = item.title,
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                        val meta = detailMeta(item, effectiveRating)
                         if (meta.isNotBlank()) {
                             Text(
                                 text = meta,
@@ -298,9 +333,9 @@ fun DetailScreen(
                                 color = AppColors.TextSecondary
                             )
                         }
-                        if (item.genres.isNotBlank()) {
+                        if (effectiveGenres.isNotBlank()) {
                             Text(
-                                text = item.genres,
+                                text = effectiveGenres,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = AppColors.TextTertiary,
                                 maxLines = 1,
@@ -366,7 +401,7 @@ fun DetailScreen(
                 }
 
                 // ---------- 简介 ----------
-                if (item.overview.isNotBlank()) {
+                if (effectiveOverview.isNotBlank()) {
                     item {
                         Column(Modifier.padding(horizontal = 18.dp)) {
                             Text(
@@ -376,7 +411,7 @@ fun DetailScreen(
                             )
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                item.overview,
+                                effectiveOverview,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = AppColors.TextSecondary
                             )
@@ -384,71 +419,77 @@ fun DetailScreen(
                     }
                 }
 
-                // ---------- 刮削信息（导演/演员/分级/工作室） ----------
-                scraped?.let { detail ->
-                    item {
-                        Column(
-                            Modifier
-                                .padding(horizontal = 18.dp)
-                                .padding(top = 14.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            // 标语
-                            if (detail.tagline.isNotBlank()) {
-                                Text(
-                                    "“${detail.tagline}”",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = AppColors.TextSecondary,
-                                    fontStyle = FontStyle.Italic
-                                )
-                            }
+                // ---------- 刮削信息（标语/分级/工作室/导演/演员）：Emby 优先，TMDB 补齐 ----------
+                run {
+                    val tagline = scraped?.tagline.orEmpty().ifBlank { tmdb?.tagline.orEmpty() }
+                    val chips = buildList {
+                        scraped?.let {
+                            if (it.officialRating.isNotBlank()) add(it.officialRating)
+                            addAll(it.studios.take(2))
+                        }
+                    }
+                    val directors = (scraped?.directors?.map { it.toCast() }
+                        ?: tmdb?.directors?.map { it.toCast() }.orEmpty())
+                    val actors = (scraped?.actors?.map { it.toCast() }
+                        ?: tmdb?.actors?.map { it.toCast() }.orEmpty())
 
-                            // 分级 + 工作室
-                            val chips = buildList {
-                                if (detail.officialRating.isNotBlank()) add(detail.officialRating)
-                                addAll(detail.studios.take(2))
-                            }
-                            if (chips.isNotEmpty()) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    chips.forEach { label ->
-                                        Box(
-                                            Modifier
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .background(AppColors.SurfaceHi)
-                                                .padding(horizontal = 8.dp, vertical = 3.dp)
-                                        ) {
-                                            Text(
-                                                label,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = AppColors.TextSecondary
-                                            )
+                    if (tagline.isNotBlank() || chips.isNotEmpty() || directors.isNotEmpty() || actors.isNotEmpty()) {
+                        item {
+                            Column(
+                                Modifier
+                                    .padding(horizontal = 18.dp)
+                                    .padding(top = 14.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (tagline.isNotBlank()) {
+                                    Text(
+                                        "“$tagline”",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = AppColors.TextSecondary,
+                                        fontStyle = FontStyle.Italic
+                                    )
+                                }
+
+                                if (chips.isNotEmpty()) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        chips.forEach { label ->
+                                            Box(
+                                                Modifier
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(AppColors.SurfaceHi)
+                                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                                            ) {
+                                                Text(
+                                                    label,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = AppColors.TextSecondary
+                                                )
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            // 导演
-                            if (detail.directors.isNotEmpty()) {
-                                Text(
-                                    "导演  " + detail.directors.joinToString("  ") { it.name },
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = AppColors.TextSecondary
-                                )
-                            }
+                                if (directors.isNotEmpty()) {
+                                    Text(
+                                        "导演  " + directors.joinToString("  ") { it.name },
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = AppColors.TextSecondary
+                                    )
+                                }
 
-                            // 演员横滑
-                            if (detail.actors.isNotEmpty()) {
-                                Text(
-                                    "主演",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = AppColors.TextPrimary
-                                )
-                                LazyRow(
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    contentPadding = PaddingValues(top = 4.dp)
-                                ) {
-                                    items(detail.actors, key = { it.name + it.role }) { person ->
-                                        CastCard(person)
+                                if (actors.isNotEmpty()) {
+                                    Text(
+                                        "主演",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = AppColors.TextPrimary
+                                    )
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        contentPadding = PaddingValues(top = 4.dp)
+                                    ) {
+                                        items(actors, key = { it.name + it.role }) { person ->
+                                            CastCard(person)
+                                        }
                                     }
                                 }
                             }
@@ -547,17 +588,23 @@ private fun playTarget(item: MediaEntity, episodes: List<MediaEntity>): MediaEnt
         episodes.firstOrNull { it.positionMs > 0 } ?: episodes.firstOrNull()
     } else item
 
-private fun detailMeta(item: MediaEntity): String {
+/** 统一演职员展示类型，抹平 EmbyClient.Person / TmdbClient.Person 的差异 */
+private data class CastPerson(val name: String, val role: String, val imageUrl: String)
+
+private fun EmbyClient.Person.toCast() = CastPerson(name, role, imageUrl)
+private fun com.tabbit.myvidhub.data.tmdb.TmdbClient.Person.toCast() = CastPerson(name, role, imageUrl)
+
+private fun detailMeta(item: MediaEntity, rating: Double = item.rating): String {
     val parts = mutableListOf<String>()
     if (item.year > 0) parts += item.year.toString()
     if (item.kind == MediaKind.SERIES) parts += "剧集"
-    if (item.rating > 0) parts += "★ %.1f".format(item.rating)
+    if (rating > 0) parts += "★ %.1f".format(rating)
     return parts.joinToString("  ·  ")
 }
 
 /** 演员卡：圆形头像 + 姓名 + 角色 */
 @Composable
-private fun CastCard(person: EmbyClient.Person) {
+private fun CastCard(person: CastPerson) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.width(64.dp)

@@ -9,6 +9,8 @@ import com.tabbit.myvidhub.data.model.MediaKind
 import com.tabbit.myvidhub.data.model.SourceEntity
 import com.tabbit.myvidhub.data.model.SourceKind
 import com.tabbit.myvidhub.data.tvbox.TvBoxClient
+import com.tabbit.myvidhub.data.tmdb.TmdbClient
+import com.tabbit.myvidhub.core.Prefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -76,6 +78,18 @@ class MediaRepository(context: Context) {
             runCatching {
                 EmbyClient(src.location, src.token, src.userId).fetchItemDetail(itemId)
             }.getOrNull()
+        }
+
+    /**
+     * TMDB 刮削：按标题+年份搜索并拉取海报/背景图/Logo/评分/简介/演职员。
+     * 作为 Emby 刮削的补充，TVBox 源没有元数据时尤其有用。
+     * 未配置 TMDB API Key 时返回 null。
+     */
+    suspend fun tmdbScrape(title: String, year: Int, kind: String): TmdbClient.ScrapeResult? =
+        withContext(Dispatchers.IO) {
+            val key = Prefs.tmdbApiKey
+            if (key.isBlank()) return@withContext null
+            runCatching { TmdbClient(key).scrape(title, year, kind) }.getOrNull()
         }
 
     /** 类型标签：拆分聚合后按出现次数排序 */

@@ -1,9 +1,14 @@
 package com.tabbit.myvidhub.ui.detail
 
+import android.content.Context
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.core.graphics.drawable.toBitmap
 import androidx.palette.graphics.Palette
+import coil.ImageLoader
+import coil.imageLoader
+import coil.request.ImageRequest
 import com.tabbit.myvidhub.ui.theme.AppColors
 
 /**
@@ -13,6 +18,39 @@ import com.tabbit.myvidhub.ui.theme.AppColors
  * 但「从封面取聚焦色」「把聚焦色压成整页填充色」属于与设备无关的纯计算，
  * 抽在这里共用，避免两端各写一份导致取色效果不一致。
  */
+
+/**
+ * 直接用 Coil ImageLoader 把封面解码成小尺寸 Bitmap。
+ *
+ * 不用 AsyncImage 的 onSuccess 回调里 drawable.toBitmap，因为某些 drawable
+ * （LayerDrawable / 矢量图 / 已被回收的 bitmap）会让 toBitmap 抛异常并被 runCatching
+ * 吞掉，结果就是取色永远失败、页面背景退回纯黑。这里走一次独立的 ImageRequest，
+ * allowHardware(false) 保证拿到的是软件位图，可直接读像素。
+ */
+internal suspend fun loadPosterBitmap(context: Context, url: String, size: Int = 160): Bitmap? {
+    if (url.isBlank()) return null
+    return runCatching {
+        val request = ImageRequest.Builder(context)
+            .data(url)
+            .size(size)
+            .allowHardware(false)
+            .build()
+        val result = context.imageLoader.execute(request)
+        val drawable = result.drawable ?: return@runCatching null
+        (drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+            ?: drawable.toBitmap(size, size)
+    }.getOrNull()
+}
+
+/**
+ * 取色彻底失败时的兜底色：根据标题文字生成一个稳定的有色相的颜色，
+ * 保证页面背景永远不会是纯黑。基于标题字符的 hashCode 选取色相。
+ */
+internal fun fallbackColorFromTitle(title: String): Color {
+    val hue = ((title.hashCode() and 0x7fffffff) % 360).toFloat()
+    val hsv = floatArrayOf(hue, 0.55f, 0.32f)
+    return Color(android.graphics.Color.HSVToColor(hsv))
+}
 
 /**
  * 从封面提取"聚焦色"。

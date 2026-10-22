@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -42,7 +43,9 @@ import com.tabbit.myvidhub.data.model.MediaKind
 import com.tabbit.myvidhub.data.model.SourceKind
 import com.tabbit.myvidhub.ui.LibraryViewModel
 import com.tabbit.myvidhub.ui.detail.FocusColorCache
+import com.tabbit.myvidhub.ui.detail.fallbackColorFromTitle
 import com.tabbit.myvidhub.ui.detail.focusColorOf
+import com.tabbit.myvidhub.ui.detail.loadPosterBitmap
 import com.tabbit.myvidhub.ui.detail.pageTonesOf
 import com.tabbit.myvidhub.ui.theme.AppColors
 import kotlinx.coroutines.Dispatchers
@@ -100,6 +103,27 @@ fun TvDetailScreen(
         }
     }
 
+    // 取色：与手机端一致，用 Coil ImageLoader 直接解码 bitmap，失败回退标题哈希色
+    val tvContext = LocalContext.current
+    LaunchedEffect(media?.posterUrl, media?.backdropUrl) {
+        val m = media ?: return@LaunchedEffect
+        val url = m.posterUrl.ifBlank { m.backdropUrl }
+        if (url.isBlank()) {
+            dominant = fallbackColorFromTitle(m.title)
+            return@LaunchedEffect
+        }
+        val cached = FocusColorCache.get(url)
+        if (cached != null) {
+            dominant = cached
+            return@LaunchedEffect
+        }
+        val bmp = withContext(Dispatchers.Default) { loadPosterBitmap(tvContext, url) }
+        val color = bmp?.let { runCatching { focusColorOf(it) }.getOrNull() }
+            ?: fallbackColorFromTitle(m.title)
+        FocusColorCache.put(url, color)
+        dominant = color
+    }
+
     val item = media
     val tones = remember(dominant) {
         if (dominant == Color.Unspecified) {
@@ -132,26 +156,6 @@ fun TvDetailScreen(
 
     val backdrop = item?.let { it.backdropUrl.ifBlank { it.posterUrl } }.orEmpty()
 
-    // 取色：命中缓存直接用；未命中就缩略解码一次。只取第一次成功的颜色，
-    // 避免头图与海报先后回调用不同颜色反复覆盖导致整页闪烁。
-    val extract: (String, AsyncImagePainter.State.Success) -> Unit = remember {
-        { url, state ->
-            if (dominant == Color.Unspecified) {
-                val cached = FocusColorCache.get(url)
-                if (cached != null) {
-                    dominant = cached
-                } else {
-                    val bmp = runCatching { state.result.drawable.toBitmapSafe(168) }.getOrNull()
-                    if (bmp != null) {
-                        val c = focusColorOf(bmp)
-                        FocusColorCache.put(url, c)
-                        dominant = c
-                    }
-                }
-            }
-        }
-    }
-
     Box(
         Modifier
             .fillMaxSize()
@@ -168,7 +172,6 @@ fun TvDetailScreen(
                     model = backdrop,
                     contentDescription = item?.title,
                     contentScale = ContentScale.Crop,
-                    onSuccess = { s -> extract(backdrop, s) },
                     modifier = Modifier.fillMaxSize()
                 )
                 Box(
@@ -220,7 +223,6 @@ fun TvDetailScreen(
                             model = item.posterUrl.ifBlank { item.backdropUrl },
                             contentDescription = item.title,
                             contentScale = ContentScale.Crop,
-                            onSuccess = { s -> extract(item.posterUrl, s) },
                             modifier = Modifier
                                 .width(220.dp)
                                 .height(330.dp)
@@ -333,14 +335,3 @@ private fun TvInfoLine(label: String, value: String) {
         )
     }
 }
-
-/** 安全缩略：解码失败返回 null，不影响取色流程 */
-private fun android.graphics.drawable.Drawable.toBitmapSafe(size: Int): android.graphics.Bitmap? =
-    runCatching {
-        if (this is android.graphics.drawable.BitmapDrawable) {
-            val bmp = bitmap
-            android.graphics.Bitmap.createScaledBitmap(bmp, size, size, true)
-        } else {
-            android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
-        }
-    }.getOrNull()

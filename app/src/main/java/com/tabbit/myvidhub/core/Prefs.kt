@@ -10,6 +10,7 @@ import android.content.SharedPreferences
 object Prefs {
 
     private const val FILE = "myvidhub_prefs"
+    private const val KEY_TMDB_API_KEY = "tmdb_api_key"
 
     private lateinit var sp: SharedPreferences
 
@@ -19,4 +20,9 @@ object Prefs {
         }
     }
 
+    var tmdbApiKey: String
+        get() = sp.getString(KEY_TMDB_API_KEY, "").orEmpty()
+        set(value) {
+            sp.edit().putString(KEY_TMDB_API_KEY, value.trim()).apply()
+        }
 }
