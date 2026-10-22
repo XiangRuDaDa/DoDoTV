@@ -1,0 +1,191 @@
+package com.tabbit.myvidhub.ui.phone
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import com.tabbit.myvidhub.data.model.MediaEntity
+import com.tabbit.myvidhub.ui.LibraryViewModel
+import com.tabbit.myvidhub.ui.detail.DetailScreen
+import com.tabbit.myvidhub.ui.home.GenreScreen
+import com.tabbit.myvidhub.ui.home.HomeScreen
+import com.tabbit.myvidhub.ui.home.SearchScreen
+import com.tabbit.myvidhub.ui.player.phone.PhonePlayerActivity
+import com.tabbit.myvidhub.ui.settings.SettingsScreen
+import com.tabbit.myvidhub.ui.sources.SourcesScreen
+import com.tabbit.myvidhub.ui.theme.AppColors
+
+/**
+ * 手机端外壳（与电视端完全独立的一套代码）。
+ *
+ * 交互前提：触摸 + 竖屏为主，底部标签栏切换，页面之间左右推入。
+ * 电视端不共用这里的任何组件，见 ui/tv/TvApp.kt。
+ */
+
+internal sealed interface PhoneRoute {
+    data object Home : PhoneRoute
+    data object Sources : PhoneRoute
+    data object Settings : PhoneRoute
+    data object Search : PhoneRoute
+    data class Detail(val mediaId: Long) : PhoneRoute
+    data class Genre(val kind: String?, val genre: String?) : PhoneRoute
+}
+
+internal enum class PhoneTab(val label: String, val icon: ImageVector) {
+    HOME("媒体库", Icons.Filled.Home),
+    SOURCES("来源", Icons.Filled.Storage),
+    SETTINGS("设置", Icons.Filled.Settings)
+}
+
+@Composable
+fun PhoneApp(vm: LibraryViewModel) {
+    val context = LocalContext.current
+    var route by remember { mutableStateOf<PhoneRoute>(PhoneRoute.Home) }
+    val snackbarHost = remember { SnackbarHostState() }
+
+    LaunchedEffect(vm.message) {
+        val msg = vm.message
+        if (!msg.isNullOrBlank()) {
+            snackbarHost.showSnackbar(msg)
+            vm.message = null
+        }
+    }
+
+    BackHandler(enabled = route !is PhoneRoute.Home) {
+        route = if (route is PhoneRoute.Genre) PhoneRoute.Home else PhoneRoute.Home
+    }
+
+    val currentTab = when (route) {
+        is PhoneRoute.Home, is PhoneRoute.Detail, is PhoneRoute.Search, is PhoneRoute.Genre -> PhoneTab.HOME
+        is PhoneRoute.Sources -> PhoneTab.SOURCES
+        is PhoneRoute.Settings -> PhoneTab.SETTINGS
+    }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHost) },
+        containerColor = AppColors.Bg,
+        bottomBar = {
+            NavigationBar(containerColor = AppColors.Surface) {
+                PhoneTab.entries.forEach { t ->
+                    NavigationBarItem(
+                        selected = currentTab == t,
+                        onClick = { route = t.route() },
+                        icon = { Icon(t.icon, contentDescription = t.label) },
+                        label = { Text(t.label) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = AppColors.Brand,
+                            selectedTextColor = AppColors.Brand,
+                            unselectedIconColor = AppColors.TextTertiary,
+                            unselectedTextColor = AppColors.TextTertiary,
+                            indicatorColor = Color.Transparent
+                        )
+                    )
+                }
+            }
+        }
+    ) { padding ->
+        Row(Modifier.fillMaxSize().padding(padding)) {
+            AnimatedContent(
+                targetState = route,
+                transitionSpec = {
+                    when {
+                        targetState is PhoneRoute.Detail || targetState is PhoneRoute.Genre ->
+                            (slideInHorizontally(animationSpec = tween(300)) { it / 6 } +
+                                fadeIn(tween(260)))
+                                .togetherWith(fadeOut(tween(160)))
+
+                        (initialState is PhoneRoute.Detail || initialState is PhoneRoute.Genre) &&
+                            targetState is PhoneRoute.Home ->
+                            (fadeIn(tween(260)) +
+                                slideInHorizontally(animationSpec = tween(300)) { -it / 12 })
+                                .togetherWith(
+                                    slideOutHorizontally(animationSpec = tween(260)) { it / 4 } +
+                                        fadeOut(tween(200))
+                                )
+
+                        else -> fadeIn(tween(220)).togetherWith(fadeOut(tween(160)))
+                    }
+                },
+                label = "phone_route",
+                modifier = Modifier.fillMaxSize()
+            ) { target ->
+                when (target) {
+                    is PhoneRoute.Home -> HomeScreen(
+                        vm = vm,
+                        isTv = false,
+                        onOpenSearch = { route = PhoneRoute.Search },
+                        onOpenDetail = { id -> route = PhoneRoute.Detail(id) },
+                        onOpenGenre = { kind, genre -> route = PhoneRoute.Genre(kind, genre) },
+                        onPlay = { item: MediaEntity ->
+                            context.startActivity(PhonePlayerActivity.intent(context, item.id))
+                        }
+                    )
+
+                    is PhoneRoute.Genre -> GenreScreen(
+                        vm = vm,
+                        isTv = false,
+                        initialKind = target.kind,
+                        initialGenre = target.genre,
+                        onBack = { route = PhoneRoute.Home },
+                        onOpenDetail = { id -> route = PhoneRoute.Detail(id) }
+                    )
+
+                    is PhoneRoute.Detail -> DetailScreen(
+                        vm = vm,
+                        mediaId = target.mediaId,
+                        isTv = false,
+                        onBack = { route = PhoneRoute.Home },
+                        onPlay = { id ->
+                            context.startActivity(PhonePlayerActivity.intent(context, id))
+                        }
+                    )
+
+                    is PhoneRoute.Search -> SearchScreen(
+                        vm = vm,
+                        isTv = false,
+                        onBack = { route = PhoneRoute.Home },
+                        onOpenDetail = { id -> route = PhoneRoute.Detail(id) }
+                    )
+
+                    is PhoneRoute.Sources -> SourcesScreen(vm = vm, isTv = false)
+                    is PhoneRoute.Settings -> SettingsScreen(vm = vm)
+                }
+            }
+        }
+    }
+}
+
+private fun PhoneTab.route(): PhoneRoute = when (this) {
+    PhoneTab.HOME -> PhoneRoute.Home
+    PhoneTab.SOURCES -> PhoneRoute.Sources
+    PhoneTab.SETTINGS -> PhoneRoute.Settings
+}

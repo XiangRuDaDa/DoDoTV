@@ -1,0 +1,329 @@
+package com.tabbit.myvidhub.ui.tv
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
+import coil.compose.AsyncImage
+import com.tabbit.myvidhub.data.model.MediaEntity
+import com.tabbit.myvidhub.ui.components.subtitle
+import com.tabbit.myvidhub.ui.theme.AppColors
+
+/**
+ * 电视端专用组件（十英尺界面）。
+ *
+ * 与手机端组件完全分开实现，理由很实在：
+ *   · 电视没有触摸，所有可交互元素必须是「可聚焦 + 有明显焦点态」，尺寸要按观看距离放大；
+ *   · 手机端组件靠涟漪和阴影表达状态，这些在电视上隔着三米根本看不见，必须用白边和放大。
+ */
+
+/** 电视上的主按钮：白底黑字（主操作）或半透明白底（次操作），聚焦时加粗白边 */
+@Composable
+fun TvPillButton(
+    text: String,
+    modifier: Modifier = Modifier,
+    primary: Boolean = true,
+    onClick: () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (focused) 1.06f else 1f, tween(140), label = "pill")
+
+    Box(
+        modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                when {
+                    primary && focused -> Color.White
+                    primary -> AppColors.Brand
+                    focused -> Color.White.copy(alpha = 0.28f)
+                    else -> Color.White.copy(alpha = 0.14f)
+                }
+            )
+            .then(if (focused) Modifier.border(2.dp, Color.White, RoundedCornerShape(8.dp)) else Modifier)
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .focusable()
+            .padding(horizontal = 26.dp, vertical = 12.dp)
+    ) {
+        Text(
+            text,
+            color = if (primary && (focused || !primary)) Color.Black else Color.White,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1
+        )
+    }
+}
+
+/**
+ * 电视端海报卡：2:3 竖版，比手机大一圈，聚焦时放大并加白色描边。
+ * 有播放进度的条目底部带一条进度线，方便一眼看出「这片看了一半」。
+ */
+@Composable
+fun TvPosterCard(
+    item: MediaEntity,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    width: Dp = 158.dp
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val scale by animateFloatAsState(if (focused) 1.10f else 1f, tween(150), label = "card")
+
+    val progress = if (item.durationMs > 0L) {
+        (item.positionMs.toFloat() / item.durationMs).coerceIn(0f, 1f)
+    } else 0f
+
+    Column(
+        modifier
+            .width(width)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(10.dp))
+            .background(AppColors.Surface)
+            .then(if (focused) Modifier.border(2.5.dp, Color.White, RoundedCornerShape(10.dp)) else Modifier)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .focusable()
+            .padding(0.dp)
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(width * 1.5f)
+                .background(AppColors.SurfaceHi)
+        ) {
+            AsyncImage(
+                model = item.posterUrl.ifBlank { item.backdropUrl },
+                contentDescription = item.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            if (progress > 0f) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .background(Color.Black.copy(alpha = 0.55f))
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(progress)
+                            .height(4.dp)
+                            .background(AppColors.Brand)
+                    )
+                }
+            }
+        }
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 7.dp)) {
+            Text(
+                item.title,
+                color = AppColors.TextPrimary,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            val sub = item.subtitle()
+            if (sub.isNotBlank()) {
+                Text(
+                    sub,
+                    color = AppColors.TextTertiary,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+/** 分区标题：电视上字要大、留白要多，右侧可挂「更多」 */
+@Composable
+fun TvSectionTitle(
+    text: String,
+    modifier: Modifier = Modifier,
+    trailing: (@Composable () -> Unit)? = null
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .padding(start = 44.dp, end = 44.dp, top = 26.dp, bottom = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text,
+            color = AppColors.TextPrimary,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f)
+        )
+        trailing?.invoke()
+    }
+}
+
+/** 电视端的「更多」入口，可用遥控器聚焦点击 */
+@Composable
+fun TvMoreButton(onClick: () -> Unit) {
+    TvPillButton(text = "查看全部", primary = false, onClick = onClick)
+}
+
+/** 空状态提示 */
+@Composable
+fun TvEmptyState(text: String, hint: String? = null) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(48.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text,
+            color = AppColors.TextSecondary,
+            style = MaterialTheme.typography.headlineSmall
+        )
+        if (hint != null) {
+            Spacer(Modifier.height(10.dp))
+            Text(hint, color = AppColors.TextTertiary, style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+}
+
+/** 元信息条：年份 · 评分 · 类型，中间用圆点分隔 */
+@Composable
+fun TvMetaRow(item: MediaEntity, modifier: Modifier = Modifier) {
+    val bits = buildList {
+        if (item.year > 0) add(item.year.toString())
+        if (item.rating > 0) add("★ %.1f".format(item.rating))
+        if (item.genres.isNotBlank()) add(item.genres.split(",", "/", " ", "，").first().trim())
+        if (item.durationMs > 0) add("${item.durationMs / 60_000} 分钟")
+    }.filter { it.isNotBlank() }
+
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        bits.forEachIndexed { index, s ->
+            if (index > 0) {
+                Text("  ·  ", color = AppColors.TextTertiary, style = MaterialTheme.typography.bodyMedium)
+            }
+            Text(
+                s,
+                color = if (s.startsWith("★")) AppColors.Rating else AppColors.TextSecondary,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
+/** 电视端返回按钮（左上角），可聚焦 */
+@Composable
+fun TvBackButton(onBack: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        Modifier
+            .padding(start = 44.dp, top = 28.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (focused) Color.White else Color.Black.copy(alpha = 0.45f))
+            .then(if (focused) Modifier.border(2.dp, Color.White, RoundedCornerShape(8.dp)) else Modifier)
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onBack
+            )
+            .focusable()
+            .padding(horizontal = 18.dp, vertical = 9.dp)
+    ) {
+        Text(
+            "← 返回",
+            color = if (focused) Color.Black else Color.White,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+/** 竖版海报行之间的统一间距 */
+internal val TvRowSpacing = 18.dp
+
+/** 行首尾留白，保证聚焦放大时不被裁切 */
+internal val TvRowPadding = 44.dp
+
+/** 电视端可聚焦的小尺寸标签（题材筛选等） */
+@Composable
+fun TvFilterChip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                when {
+                    focused -> Color.White
+                    selected -> AppColors.Brand
+                    else -> AppColors.SurfaceHi
+                }
+            )
+            .then(if (focused) Modifier.border(2.dp, Color.White, RoundedCornerShape(20.dp)) else Modifier)
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .focusable()
+            .padding(horizontal = 20.dp, vertical = 9.dp)
+    ) {
+        Text(
+            text,
+            color = when {
+                focused -> Color.Black
+                selected -> Color.White
+                else -> AppColors.TextSecondary
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (focused || selected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1
+        )
+    }
+}
