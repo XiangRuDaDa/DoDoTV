@@ -53,6 +53,11 @@ import com.tabbit.myvidhub.ui.theme.AppColors
  *
  * 交互前提：触摸 + 竖屏为主，底部标签栏切换，页面之间左右推入。
  * 电视端不共用这里的任何组件，见 ui/tv/TvApp.kt。
+ *
+ * 导航用栈（[navStack]）：
+ * - 跳转详情、分类等子页面 = 入栈
+ * - 返回 = 出栈（自动回到进入详情页之前的那个页面）
+ * - 切底栏 Tab = 重置为该 Tab 的根页面（不保留旧栈）
  */
 
 internal sealed interface PhoneRoute {
@@ -73,7 +78,8 @@ internal enum class PhoneTab(val label: String, val icon: ImageVector) {
 @Composable
 fun PhoneApp(vm: LibraryViewModel) {
     val context = LocalContext.current
-    var route by remember { mutableStateOf<PhoneRoute>(PhoneRoute.Home) }
+    // 导航栈：初始在 Home；底栏切换会重置栈，详情/搜索/分类会入栈
+    var navStack by remember { mutableStateOf<List<PhoneRoute>>(listOf(PhoneRoute.Home)) }
     val snackbarHost = remember { SnackbarHostState() }
 
     LaunchedEffect(vm.message) {
@@ -84,11 +90,16 @@ fun PhoneApp(vm: LibraryViewModel) {
         }
     }
 
-    BackHandler(enabled = route !is PhoneRoute.Home) {
-        route = if (route is PhoneRoute.Genre) PhoneRoute.Home else PhoneRoute.Home
+    // 弹出栈顶 = 返回上一个页面；已经在根时系统会自己拦截
+    val goBack = {
+        if (navStack.size > 1) navStack = navStack.dropLast(1)
     }
+    val push: (PhoneRoute) -> Unit = { r -> navStack = navStack + r }
+    val resetTo: (PhoneRoute) -> Unit = { r -> navStack = listOf(r) }
 
-    val currentTab = when (route) {
+    BackHandler(enabled = navStack.size > 1) { goBack() }
+
+    val currentTab = when (navStack.last()) {
         is PhoneRoute.Home, is PhoneRoute.Detail, is PhoneRoute.Search, is PhoneRoute.Genre -> PhoneTab.HOME
         is PhoneRoute.Sources -> PhoneTab.SOURCES
         is PhoneRoute.Settings -> PhoneTab.SETTINGS
@@ -106,7 +117,7 @@ fun PhoneApp(vm: LibraryViewModel) {
                 PhoneTab.entries.forEach { t ->
                     NavigationBarItem(
                         selected = currentTab == t,
-                        onClick = { route = t.route() },
+                        onClick = { resetTo(t.route()) },
                         icon = { Icon(t.icon, contentDescription = t.label, modifier = Modifier.size(20.dp)) },
                         label = { Text(t.label, style = MaterialTheme.typography.labelSmall) },
                         colors = NavigationBarItemDefaults.colors(
@@ -123,7 +134,7 @@ fun PhoneApp(vm: LibraryViewModel) {
     ) { padding ->
         Row(Modifier.fillMaxSize().padding(padding)) {
             AnimatedContent(
-                targetState = route,
+                targetState = navStack.last(),
                 transitionSpec = {
                     when {
                         targetState is PhoneRoute.Detail || targetState is PhoneRoute.Genre ->
@@ -150,9 +161,9 @@ fun PhoneApp(vm: LibraryViewModel) {
                     is PhoneRoute.Home -> HomeScreen(
                         vm = vm,
                         isTv = false,
-                        onOpenSearch = { route = PhoneRoute.Search },
-                        onOpenDetail = { id -> route = PhoneRoute.Detail(id) },
-                        onOpenGenre = { kind, genre -> route = PhoneRoute.Genre(kind, genre) },
+                        onOpenSearch = { push(PhoneRoute.Search) },
+                        onOpenDetail = { id -> push(PhoneRoute.Detail(id)) },
+                        onOpenGenre = { kind, genre -> push(PhoneRoute.Genre(kind, genre)) },
                         onPlay = { item: MediaEntity ->
                             context.startActivity(PhonePlayerActivity.intent(context, item.id))
                         }
@@ -163,15 +174,15 @@ fun PhoneApp(vm: LibraryViewModel) {
                         isTv = false,
                         initialKind = target.kind,
                         initialGenre = target.genre,
-                        onBack = { route = PhoneRoute.Home },
-                        onOpenDetail = { id -> route = PhoneRoute.Detail(id) }
+                        onBack = goBack,
+                        onOpenDetail = { id -> push(PhoneRoute.Detail(id)) }
                     )
 
                     is PhoneRoute.Detail -> DetailScreen(
                         vm = vm,
                         mediaId = target.mediaId,
                         isTv = false,
-                        onBack = { route = PhoneRoute.Home },
+                        onBack = goBack,
                         onPlay = { id ->
                             context.startActivity(PhonePlayerActivity.intent(context, id))
                         }
@@ -180,8 +191,8 @@ fun PhoneApp(vm: LibraryViewModel) {
                     is PhoneRoute.Search -> SearchScreen(
                         vm = vm,
                         isTv = false,
-                        onBack = { route = PhoneRoute.Home },
-                        onOpenDetail = { id -> route = PhoneRoute.Detail(id) }
+                        onBack = goBack,
+                        onOpenDetail = { id -> push(PhoneRoute.Detail(id)) }
                     )
 
                     is PhoneRoute.Sources -> SourcesScreen(vm = vm, isTv = false)

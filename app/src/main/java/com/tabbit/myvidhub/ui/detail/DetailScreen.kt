@@ -241,6 +241,9 @@ fun DetailScreen(
      * 这里改成：优先取有饱和度的色块 → 保证亮度/饱和度下限 → 整页用不透明深色铺满，
      * 所以无论海报明暗，页面都会带上它自己的色调。
      */
+    // 海报占屏比例：bgBrush 渐变起点必须对齐这个值，否则海报底部会和页面背景出现硬切。
+    val screenH = LocalConfiguration.current.screenHeightDp.dp
+    val headerRatio = if (isTv) 0.52f else 0.58f
     val pageTones = remember(dominantColor) {
         if (dominantColor == Color.Unspecified) {
             AppColors.Bg to lerp(AppColors.Bg, Color.Black, 0.55f)
@@ -259,12 +262,16 @@ fun DetailScreen(
         label = "page_bottom"
     )
 
-    // 整页填充色 = 封面聚焦色：顶部色相最浓，向下同色相压暗，滚动到底也不会露出纯黑断层
-    val bgBrush = remember(animatedTop, animatedBottom) {
+    // 整页填充色：顶部 0~headerRatio 全是主色（和海报覆盖区域对齐），headerRatio 之后才往深色渐变。
+    // 这样 headerScrim（海报 → 主色）和 bgBrush（主色 → 深色）首尾相接，看不到硬边。
+    val bgBrush = remember(animatedTop, animatedBottom, headerRatio) {
+        val r = headerRatio
+        val mid = r + (1f - r) * 0.45f  // 中间控制点：主色到深色过渡的中点
+        val midColor = lerp(animatedTop, animatedBottom, 0.55f)
         Brush.verticalGradient(
             0f to animatedTop,
-            0.30f to animatedTop,
-            0.68f to lerp(animatedTop, animatedBottom, 0.72f),
+            r to animatedTop,    // 海报覆盖区 = 纯主色，与 headerScrim 终点衔接
+            mid to midColor,
             1f to animatedBottom
         )
     }
@@ -308,9 +315,8 @@ fun DetailScreen(
             ) {
                 // ---------- 顶部海报：全宽沉浸头图，标题覆盖在海报下部 ----------
                 item {
-                    val screenH = LocalConfiguration.current.screenHeightDp.dp
-                    // 海报占屏高约 58%（TV 端 52%），比原来固定 320dp 明显更大
-                    val headerH = if (isTv) screenH * 0.52f else screenH * 0.58f
+                    // 海报高度 = 动态算出来和上面 headerRatio 对齐
+                    val headerH = screenH * headerRatio
 
                     Box(
                         Modifier
@@ -372,8 +378,8 @@ fun DetailScreen(
                                     contentDescription = item.title,
                                     contentScale = ContentScale.Fit,
                                     modifier = Modifier
-                                        .height(58.dp)
-                                        .widthIn(max = 300.dp)
+                                        .height(80.dp)
+                                        .widthIn(max = 360.dp)
                                 )
                             } else {
                                 Text(
