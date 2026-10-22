@@ -71,5 +71,12 @@ data class MediaEntity(
     val lastPlayedAt: Long = 0L,
     /** 是否收藏 */
     val favorite: Boolean = false,
-    val addedAt: Long = System.currentTimeMillis()
+    val addedAt: Long = System.currentTimeMillis(),
+
+    /**
+     * TMDB 刮削成功的时间戳，0 表示从未用 TMDB 刮过。
+     * 用来判断「要不要为这条记录再发请求」：
+     * 非 0 且在有效期内就直接用库里的数据，不再联网。
+     */
+    val scrapedAt: Long = 0L
 )

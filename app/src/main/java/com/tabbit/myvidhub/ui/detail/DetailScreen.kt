@@ -132,9 +132,18 @@ fun DetailScreen(
             // 凭据为空时 engine == LEGACY，完全沿用原有方案
             // （Emby 自带元数据 / TVBox 返回字段），不发任何外部请求。
             if (ScrapeStrategy.refresh() == ScrapeEngine.TMDB) {
-                runCatching {
-                    vm.tmdbScrape(m.title, m.year, m.kind)
-                }.getOrNull()?.let { tmdb = it }
+                // 跨重启的第一道拦截：库里已有近期刮削结果且关键字段齐全，就不再联网。
+                // 内存缓存重启会丢，但 scrapedAt 是持久化的，
+                // 能省掉「每次冷启动都把整个库重新刮一遍」这种最贵的浪费。
+                val fresh = m.scrapedAt > 0L &&
+                    System.currentTimeMillis() - m.scrapedAt < SCRAPE_FRESH_MS
+                val localReady = m.posterUrl.isNotBlank() || m.logoUrl.isNotBlank()
+                if (!(fresh && localReady)) {
+                    // mediaId 传下去：命中网络结果后会回填数据库并打上 scrapedAt
+                    runCatching {
+                        vm.tmdbScrape(m.title, m.year, m.kind, mediaId)
+                    }.getOrNull()?.let { tmdb = it }
+                }
             }
 
             if (m.kind == MediaKind.SERIES) {
@@ -619,6 +628,9 @@ fun DetailScreen(
 }
 
 /** 决定「播放」按钮跳哪一集：优先未看完的，其次第一集 */
+/** 刮削结果的新鲜期：7 天内不回源重刮（与内存缓存 TTL 一致） */
+private const val SCRAPE_FRESH_MS = 7L * 24 * 60 * 60 * 1000
+
 private fun playTarget(item: MediaEntity, episodes: List<MediaEntity>): MediaEntity? =
     if (item.kind == MediaKind.SERIES) {
         episodes.firstOrNull { it.positionMs > 0 } ?: episodes.firstOrNull()

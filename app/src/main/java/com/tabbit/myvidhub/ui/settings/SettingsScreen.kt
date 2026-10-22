@@ -11,6 +11,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -203,6 +207,53 @@ fun SettingsScreen(vm: LibraryViewModel) {
                     style = MaterialTheme.typography.labelSmall,
                     color = AppColors.TextTertiary
                 )
+
+                // ---- 刮削缓存管理 ----
+                // 这里既说明防重复请求的机制，也给一个手动清空入口
+                if (activeEngine == com.tabbit.myvidhub.data.scrape.ScrapeEngine.TMDB) {
+                    var cacheCount by remember { mutableStateOf(vm.scrapeCacheSize()) }
+                    var clearing by remember { mutableStateOf(false) }
+                    val scope = rememberCoroutineScope()
+
+                    Text(
+                        "防频繁请求：同一部影片 7 天内只刮一次，刮不到的结果也缓存 1 天，" +
+                            "同一时刻的重复请求会自动合并；结果还会写入本地媒体库，重启后不重复联网。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AppColors.TextTertiary
+                    )
+                    Text(
+                        "当前内存缓存：$cacheCount 条",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AppColors.TextSecondary
+                    )
+
+                    Button(
+                        onClick = {
+                            if (clearing) return@Button
+                            clearing = true
+                            scope.launch {
+                                vm.clearScrapeCache()
+                                cacheCount = vm.scrapeCacheSize()
+                                clearing = false
+                            }
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AppColors.SurfaceHi,
+                            contentColor = AppColors.TextPrimary
+                        )
+                    ) {
+                        Text(
+                            if (clearing) "正在清空…" else "清空刮削缓存",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                    Text(
+                        "清空后下次打开详情页会重新向 TMDB 刮削；已存下的海报、简介等字段不会被抹掉。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AppColors.TextTertiary
+                    )
+                }
             }
         }
 

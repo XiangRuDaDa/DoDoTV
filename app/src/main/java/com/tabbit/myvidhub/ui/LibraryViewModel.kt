@@ -254,8 +254,19 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         repo.embyDetail(sourceId, remoteId)
 
     /** TMDB 刮削（海报/背景图/Logo/评分/简介/演职员），未配置 API Key 时返回 null */
-    suspend fun tmdbScrape(title: String, year: Int, kind: String): com.tabbit.myvidhub.data.tmdb.TmdbClient.ScrapeResult? =
-        repo.tmdbScrape(title, year, kind)
+    suspend fun tmdbScrape(
+        title: String,
+        year: Int,
+        kind: String,
+        mediaId: Long = 0L
+    ): com.tabbit.myvidhub.data.tmdb.TmdbClient.ScrapeResult? =
+        repo.tmdbScrape(title, year, kind, mediaId)
+
+    /** 清空刮削缓存，返回被清掉的缓存条目数 */
+    suspend fun clearScrapeCache(): Int = repo.clearScrapeCache()
+
+    /** 当前刮削缓存条目数 */
+    fun scrapeCacheSize(): Int = repo.scrapeCacheSize()
 
     // ---------- 扫描 ----------
 

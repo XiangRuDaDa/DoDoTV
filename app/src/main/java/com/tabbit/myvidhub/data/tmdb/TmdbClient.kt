@@ -40,10 +40,7 @@ class TmdbClient(
 
     data class Person(val name: String, val role: String, val imageUrl: String)
 
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
-        .build()
+    private val http = sharedHttp
 
     /** 是否具备可用凭据 */
     private val hasCredential: Boolean
@@ -190,6 +187,20 @@ class TmdbClient(
     }
 
     companion object {
+        /**
+         * 全局共享的 OkHttpClient。
+         * 原来每个 TmdbClient 实例各建一个，等于每次打开详情页都新开一套连接池和线程池，
+         * 既浪费资源又复用不了 TCP 连接。OkHttp 本身是线程安全且鼓励复用的，
+         * 这里做成单例，连接池（默认 5 个空闲连接保活 5 分钟）才能真正发挥作用。
+         */
+        private val sharedHttp: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(12, TimeUnit.SECONDS)
+                .readTimeout(25, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build()
+        }
+
         private const val BASE = "https://api.themoviedb.org/3"
         private const val IMAGE_BASE = "https://image.tmdb.org/t/p"
     }

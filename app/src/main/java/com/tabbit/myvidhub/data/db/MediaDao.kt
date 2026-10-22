@@ -125,4 +125,45 @@ interface MediaDao {
 
     @Query("SELECT DISTINCT genres FROM media WHERE genres != ''")
     suspend fun distinctGenres(): List<String>
+
+    /**
+     * TMDB 刮削结果回填。
+     *
+     * 只补空字段（COALESCE/NULLIF 判断），不覆盖 Emby 已有的元数据：
+     * Emby 是用户自己的库，优先级更高；TMDB 只做补充。
+     * 同时写入 scrapedAt，下次打开详情页就能凭它判断"已有缓存、不必再联网"。
+     */
+    @Query(
+        "UPDATE media SET " +
+            "posterUrl = CASE WHEN posterUrl = '' THEN :posterUrl ELSE posterUrl END, " +
+            "backdropUrl = CASE WHEN backdropUrl = '' THEN :backdropUrl ELSE backdropUrl END, " +
+            "logoUrl = CASE WHEN logoUrl = '' THEN :logoUrl ELSE logoUrl END, " +
+            "overview = CASE WHEN overview = '' THEN :overview ELSE overview END, " +
+            "genres = CASE WHEN genres = '' THEN :genres ELSE genres END, " +
+            "rating = CASE WHEN rating <= 0 THEN :rating ELSE rating END, " +
+            "scrapedAt = :scrapedAt " +
+            "WHERE id = :id"
+    )
+    suspend fun updateScrapedMeta(
+        id: Long,
+        posterUrl: String,
+        backdropUrl: String,
+        logoUrl: String,
+        overview: String,
+        genres: String,
+        rating: Double,
+        scrapedAt: Long
+    )
+
+    /** 取单条，刮削前核对库里是否已有可用元数据 */
+    @Query("SELECT * FROM media WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): MediaEntity?
+
+    /** 批量标记：启动清理时把过期的 scrapedAt 归零，让详情页重新刮 */
+    @Query("UPDATE media SET scrapedAt = 0 WHERE scrapedAt > 0 AND scrapedAt < :before")
+    suspend fun clearStaleScrapeMarks(before: Long): Int
+
+    /** 清空全部刮削标记（设置页"清空刮削缓存"用）：TMDB 补的字段保持不动，只让下次重新校验 */
+    @Query("UPDATE media SET scrapedAt = 0")
+    suspend fun clearAllScrapeMarks(): Int
 }

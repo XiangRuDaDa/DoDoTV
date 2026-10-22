@@ -9,6 +9,7 @@ import com.tabbit.myvidhub.data.model.MediaKind
 import com.tabbit.myvidhub.data.model.SourceEntity
 import com.tabbit.myvidhub.data.model.SourceKind
 import com.tabbit.myvidhub.data.tvbox.TvBoxClient
+import com.tabbit.myvidhub.data.tmdb.TmdbCache
 import com.tabbit.myvidhub.data.tmdb.TmdbClient
 import com.tabbit.myvidhub.core.Prefs
 import kotlinx.coroutines.Dispatchers
@@ -85,13 +86,60 @@ class MediaRepository(context: Context) {
      * 作为 Emby 刮削的补充，TVBox 源没有元数据时尤其有用。
      * 未配置 TMDB API Key 时返回 null。
      */
-    suspend fun tmdbScrape(title: String, year: Int, kind: String): TmdbClient.ScrapeResult? =
-        withContext(Dispatchers.IO) {
-            val key = Prefs.tmdbApiKey
-            val token = Prefs.tmdbReadToken
-            if (key.isBlank() && token.isBlank()) return@withContext null
-            runCatching { TmdbClient(key, token).scrape(title, year, kind) }.getOrNull()
+    /**
+     * TMDB 刮削（带防频繁请求保护）。
+     *
+     * 三层拦截，越靠前越省钱：
+     * 1. 内存缓存命中 → 直接返回（7 天内不重复请求；刮不到的也缓存 1 天）
+     * 2. 同 key 并发请求去重 → 复用第一次的结果
+     * 3. 都未命中才真正发网络请求，成功后顺手回填数据库
+     *
+     * [mediaId] 传入时，刮到的元数据会写回 media 表并标记 scrapedAt，
+     * 这样即使 App 重启、内存缓存丢了，库里也还有数据可用。
+     */
+    suspend fun tmdbScrape(
+        title: String,
+        year: Int,
+        kind: String,
+        mediaId: Long = 0L
+    ): TmdbClient.ScrapeResult? = withContext(Dispatchers.IO) {
+        val apiKey = Prefs.tmdbApiKey
+        val token = Prefs.tmdbReadToken
+        if (apiKey.isBlank() && token.isBlank()) return@withContext null
+
+        val cacheKey = TmdbCache.keyOf(title, year, kind)
+        val result = runCatching {
+            TmdbCache.getOrFetch(cacheKey) {
+                TmdbClient(apiKey, token).scrape(title, year, kind)
+            }
+        }.getOrNull() ?: return@withContext null
+
+        // 回填数据库：只在有 mediaId 时才写，避免列表预刮时乱写
+        if (mediaId > 0L) {
+            runCatching {
+                mediaDao.updateScrapedMeta(
+                    id = mediaId,
+                    posterUrl = result.posterUrl,
+                    backdropUrl = result.backdropUrl,
+                    logoUrl = result.logoUrl,
+                    overview = result.overview,
+                    genres = result.genres,
+                    rating = result.rating,
+                    scrapedAt = System.currentTimeMillis()
+                )
+            }
         }
+        result
+    }
+
+    /** 清空 TMDB 内存缓存 + 数据库刮削标记（设置页入口） */
+    suspend fun clearScrapeCache(): Int = withContext(Dispatchers.IO) {
+        TmdbCache.clear()
+        mediaDao.clearAllScrapeMarks()
+    }
+
+    /** 当前缓存条目数 */
+    fun scrapeCacheSize(): Int = TmdbCache.size()
 
     /** 类型标签：拆分聚合后按出现次数排序 */
     suspend fun genreTags(limit: Int = 16): List<String> =
@@ -108,7 +156,13 @@ class MediaRepository(context: Context) {
 
     /**
      * 按 remoteId 写入元数据。
-     * 已存在时保留 id / 播放进度 / 收藏 / 添加时间，只刷新标题、海报与播放地址。
+     *
+     * 已存在时保留 id / 播放进度 / 收藏 / 添加时间，并刷新源同步来的字段。
+     *
+     * 关键语义：**源同步字段有值就用源的，源给空字符串就保留 DB 已有值**。
+     * 这样 Emby/TVBox 重同步时不会把 TMDB 补好的 logoUrl / posterUrl / overview
+     * 等字段冲成空。优先级：Emby 自带元数据 > TVBox 返回字段 > TMDB 补空。
+     *
      * 不能用 upsert(REPLACE)：那会删行重插，进度和收藏都会丢。
      */
     private suspend fun saveMedia(entity: MediaEntity) {
@@ -119,11 +173,20 @@ class MediaRepository(context: Context) {
             mediaDao.update(
                 entity.copy(
                     id = existing.id,
+                    // ---- 播放相关：始终保留已有进度，源同步不会覆盖 ----
                     positionMs = existing.positionMs,
                     lastPlayedAt = existing.lastPlayedAt,
                     favorite = existing.favorite,
                     addedAt = existing.addedAt,
-                    durationMs = if (entity.durationMs > 0) entity.durationMs else existing.durationMs
+                    durationMs = if (entity.durationMs > 0) entity.durationMs else existing.durationMs,
+                    // ---- 媒体元数据：源有值就用它，源给空就保留 DB 已有（可能是 TMDB 补的） ----
+                    posterUrl = entity.posterUrl.ifBlank { existing.posterUrl },
+                    backdropUrl = entity.backdropUrl.ifBlank { existing.backdropUrl },
+                    logoUrl = entity.logoUrl.ifBlank { existing.logoUrl },
+                    overview = entity.overview.ifBlank { existing.overview },
+                    genres = entity.genres.ifBlank { existing.genres },
+                    rating = if (entity.rating > 0) entity.rating else existing.rating,
+                    year = if (entity.year > 0) entity.year else existing.year
                 )
             )
         }
