@@ -35,9 +35,15 @@ object ScrapeStrategy {
     var engine: ScrapeEngine = ScrapeEngine.LEGACY
         private set
 
-    /** 依据当前凭据推导应该用哪个引擎（不写入状态） */
+    /**
+     * 依据「总开关 + 凭据」推导应该用哪个引擎（不写入状态）。
+     *
+     * 注意这里是「与」的关系：开关默认关闭，所以即使以前填过令牌，
+     * 只要用户没主动打开开关，就仍然走原有方案，不会偷偷联网。
+     */
     fun resolve(): ScrapeEngine =
-        if (Prefs.tmdbConfigured) ScrapeEngine.TMDB else ScrapeEngine.LEGACY
+        if (Prefs.tmdbEnabled && Prefs.tmdbConfigured) ScrapeEngine.TMDB
+        else ScrapeEngine.LEGACY
 
     /**
      * 重新判定并落地。App 启动时调用一次；用户在设置页改完凭据后也会再调一次，
@@ -54,7 +60,7 @@ object ScrapeStrategy {
 
     /** 给日志/设置页用的可读描述 */
     fun describe(): String = when (engine) {
-        ScrapeEngine.TMDB -> "TMDB 刮削（已配置凭据）"
-        ScrapeEngine.LEGACY -> "原有方案（未配置 TMDB 凭据）"
+        ScrapeEngine.TMDB -> "TMDB 刮削"
+        ScrapeEngine.LEGACY -> "原有方案（本地元数据）"
     }
 }

@@ -376,15 +376,15 @@ fun TvDetailScreen(
                                 Spacer(Modifier.height(14.dp))
                             }
 
-                            val directors = (tmdb?.directors?.takeIf { it.isNotEmpty() }
-                                ?: scraped?.directors)
-                                ?.joinToString(" / ") { it.name }.orEmpty()
+                            val directors = (tmdb?.directors?.takeIf { it.isNotEmpty() }?.map { it.name }
+                                ?: scraped?.directors?.map { it.name })
+                                ?.joinToString(" / ").orEmpty()
                             if (directors.isNotBlank()) {
                                 TvInfoLine("导演", directors)
                             }
-                            val actors = (tmdb?.actors?.takeIf { it.isNotEmpty() }
-                                ?: scraped?.actors)
-                                ?.take(6)?.joinToString(" / ") { it.name }.orEmpty()
+                            val actors = (tmdb?.actors?.takeIf { it.isNotEmpty() }?.map { it.name }
+                                ?: scraped?.actors?.map { it.name })
+                                ?.take(6)?.joinToString(" / ").orEmpty()
                             if (actors.isNotBlank()) {
                                 TvInfoLine("主演", actors)
                             }

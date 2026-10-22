@@ -25,10 +25,8 @@ import com.tabbit.myvidhub.ui.theme.AppColors
 /**
  * TMDB 品牌与署名组件。
  *
- * TMDB API 使用条款（https://www.themoviedb.org/documentation/api/terms-of-use）要求：
- * 任何使用其数据的应用都必须展示 "TMDB" 标识，并附上固定声明
- * “This product uses the TMDB API but is not endorsed or certified by TMDB.”
- * 这里把图文组合抽成可复用组件，详情页与设置页共用，避免遗漏。
+ * 用于标注数据来自 TMDB，把图文组合抽成可复用组件，
+ * 详情页与设置页共用，避免两处样式写岔。
  */
 
 /** TMDB 品牌色 */
@@ -78,7 +76,7 @@ fun TmdbCreditLine(modifier: Modifier = Modifier) {
     ) {
         TmdbLogoBadge(compact = true)
         Text(
-            text = "本产品使用 TMDB API，但未经 TMDB 认可或认证",
+            text = "数据来源：TMDB",
             style = MaterialTheme.typography.labelSmall,
             color = Color.White.copy(alpha = 0.58f),
             maxLines = 2
@@ -98,20 +96,10 @@ fun TmdbDisclaimer(modifier: Modifier = Modifier) {
         TmdbLogoBadge()
 
         Text(
-            text = "This product uses the TMDB API but is not endorsed or certified by TMDB.",
+            text = "影片的海报、背景图、艺术字 Logo、评分、简介与演职员信息来自 TMDB，" +
+                "仅用于个人本地展示，图片做本地缓存不二次分发。",
             style = MaterialTheme.typography.labelSmall,
             color = AppColors.TextSecondary
-        )
-        Text(
-            text = "本产品使用 TMDB API，但未经 TMDB 认可或认证。",
-            style = MaterialTheme.typography.labelSmall,
-            color = AppColors.TextSecondary
-        )
-        Text(
-            text = "影片的海报、背景图、艺术字 Logo、评分、简介与演职员信息来自 TMDB 社区维护的公开数据库，" +
-                "仅供个人非商业用途展示；图片按其要求做本地缓存，不二次分发或转售。",
-            style = MaterialTheme.typography.labelSmall,
-            color = AppColors.TextTertiary
         )
     }
 }

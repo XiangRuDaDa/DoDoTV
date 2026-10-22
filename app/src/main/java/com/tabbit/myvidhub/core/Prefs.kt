@@ -12,7 +12,7 @@ object Prefs {
     private const val FILE = "myvidhub_prefs"
     private const val KEY_TMDB_API_KEY = "tmdb_api_key"
     private const val KEY_TMDB_READ_TOKEN = "tmdb_read_token"
-    private const val KEY_TMDB_IMAGE_BASE = "tmdb_image_base"
+    private const val KEY_TMDB_ENABLED = "tmdb_enabled"
     private const val KEY_TONE_PREFIX = "detail_tone_"
 
     private lateinit var sp: SharedPreferences
@@ -22,6 +22,18 @@ object Prefs {
             sp = context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
         }
     }
+
+    /**
+     * TMDB 刮削总开关。默认 false。
+     *
+     * 关闭时不展示任何 TMDB 设置与声明，也不发起任何外部请求，
+     * 完全沿用 Emby 自带元数据 / TVBox 返回字段。这是默认形态。
+     */
+    var tmdbEnabled: Boolean
+        get() = sp.getBoolean(KEY_TMDB_ENABLED, false)
+        set(value) {
+            sp.edit().putBoolean(KEY_TMDB_ENABLED, value).apply()
+        }
 
     /**
      * TMDB API Key（v3 auth）。
@@ -42,22 +54,6 @@ object Prefs {
         get() = sp.getString(KEY_TMDB_READ_TOKEN, "").orEmpty()
         set(value) {
             sp.edit().putString(KEY_TMDB_READ_TOKEN, value.trim()).apply()
-        }
-
-    /**
-     * TMDB 图片域名替换（可选）。
-     *
-     * 国内直连 image.tmdb.org 往往很慢甚至失败，这是刮削「图片出不来、海报迟迟不显示」的主因。
-     * 填一个可用的镜像地址后，所有 image.tmdb.org 请求都会自动改写到该域名，
-     * 图片加载速度通常有数倍提升。留空则继续用官方域名。
-     *
-     * 填法：只要域名部分即可，例如 https://tmdb-image.example.com
-     * 若镜像带路径前缀（如 https://cdn.example.com/tmdb），也会自动拼在前面。
-     */
-    var tmdbImageBase: String
-        get() = sp.getString(KEY_TMDB_IMAGE_BASE, "").orEmpty()
-        set(value) {
-            sp.edit().putString(KEY_TMDB_IMAGE_BASE, value.trim().trimEnd('/')).apply()
         }
 
     /**
