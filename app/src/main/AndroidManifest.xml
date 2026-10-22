@@ -51,11 +51,20 @@
             </intent-filter>
         </activity>
 
-        <!-- 全屏播放页 -->
+        <!-- 手机端播放器（触摸手势、横竖屏自适应） -->
         <activity
-            android:name=".ui.player.ViewerActivity"
+            android:name=".ui.player.phone.PhonePlayerActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
             android:exported="false"
+            android:screenOrientation="fullSensor"
+            android:theme="@style/Theme.MyVidHub.Fullscreen" />
+
+        <!-- 电视端播放器（遥控器交互、固定全屏、无比例切换） -->
+        <activity
+            android:name=".ui.player.tv.TvPlayerActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:screenOrientation="landscape"
             android:theme="@style/Theme.MyVidHub.Fullscreen" />
 
     </application>
