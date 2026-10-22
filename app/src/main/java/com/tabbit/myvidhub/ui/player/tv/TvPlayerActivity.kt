@@ -46,6 +46,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.nativeKeyCode
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -369,7 +370,7 @@ class TvPlayerActivity : ComponentActivity() {
                 .focusRequester(rootFocus)
                 .onPreviewKeyEvent { ev ->
                     if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    when (ev.nativeKeyCode) {
+                    when (ev.key.nativeKeyCode) {
                         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                             if (panelTab != null) return@onPreviewKeyEvent false // 交给选项自己处理
                             togglePlayPause()
@@ -716,8 +717,8 @@ private fun TvChip(
             .focusable()
             .onPreviewKeyEvent { ev ->
                 if (ev.type == KeyEventType.KeyDown &&
-                    (ev.nativeKeyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
-                        ev.nativeKeyCode == KeyEvent.KEYCODE_ENTER)
+                    (ev.key.nativeKeyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                        ev.key.nativeKeyCode == KeyEvent.KEYCODE_ENTER)
                 ) {
                     onClick()
                     true
