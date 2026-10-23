@@ -78,5 +78,14 @@ data class MediaEntity(
      * 用来判断「要不要为这条记录再发请求」：
      * 非 0 且在有效期内就直接用库里的数据，不再联网。
      */
-    val scrapedAt: Long = 0L
+    val scrapedAt: Long = 0L,
+
+    // ---- Emby MediaSources 媒体信息（可选，非 Emby 源为空）----
+
+    /** 视频分辨率标签，如 "4K" / "1080p" / "720p" / "SD"。从 Emby MediaSources.MediaStreams 解析 Width/Height。 */
+    val videoResolution: String = "",
+    /** HDR 类型："" 无；"HDR" / "Dolby Vision" / "HDR10" / "HLG" */
+    val hdrType: String = "",
+    /** 视频编码器：H.264 / HEVC (H.265) / AV1 / VP9 等 */
+    val videoCodec: String = ""
 )

@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tabbit.myvidhub.data.scrape.ScrapeStrategy
@@ -73,18 +74,21 @@ fun SettingsScreen(vm: LibraryViewModel) {
     Column(
         Modifier
             .fillMaxSize()
+            .background(AppColors.Bg)
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(16.dp, 20.dp, 16.dp, 32.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text(
             "设置",
             style = MaterialTheme.typography.headlineMedium,
-            color = AppColors.TextPrimary
+            color = AppColors.TextPrimary,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 4.dp)
         )
 
         // ---------- 状态 ----------
-        SettingCard(title = "当前状态") {
+        SettingCard(title = "状态") {
             StatRow("来源数量", "${sources.size}")
             StatRow("媒体条目", "${library.size}")
             StatRow(
@@ -94,7 +98,7 @@ fun SettingsScreen(vm: LibraryViewModel) {
             )
         }
 
-        // ---------- 界面 ----------
+        // ---------- 界面（合并 TV 强制模式 + 海报尺寸） ----------
         SettingCard(title = "界面") {
             Row(
                 Modifier
@@ -119,6 +123,38 @@ fun SettingsScreen(vm: LibraryViewModel) {
                     checked = forceTv,
                     onCheckedChange = { forceTv = it; prefs.edit().putBoolean(KEY_FORCE_TV, it).apply() }
                 )
+            }
+
+            Text(
+                "缩略图大小",
+                style = MaterialTheme.typography.bodyMedium,
+                color = AppColors.TextPrimary
+            )
+            val sizes = Prefs.PosterSize.values()
+            var current by remember { mutableStateOf(Prefs.posterSize) }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                sizes.forEach { s ->
+                    val selected = s == current
+                    AssistChip(
+                        onClick = { Prefs.posterSize = s; current = s },
+                        label = {
+                            Text(
+                                when (s) {
+                                    Prefs.PosterSize.SMALL -> "小"
+                                    Prefs.PosterSize.MEDIUM -> "中"
+                                    Prefs.PosterSize.LARGE -> "大"
+                                }
+                            )
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (selected) AppColors.Brand.copy(alpha = 0.18f) else AppColors.Surface,
+                            labelColor = if (selected) AppColors.Brand else AppColors.TextSecondary
+                        )
+                    )
+                }
             }
         }
 
@@ -250,44 +286,7 @@ fun SettingsScreen(vm: LibraryViewModel) {
             }
         }
 
-        // ---------- 界面 ----------
-        SettingCard(title = "界面") {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "首页缩略图大小",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = AppColors.TextPrimary
-                )
-                val sizes = Prefs.PosterSize.values()
-                var current by remember { mutableStateOf(Prefs.posterSize) }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    sizes.forEach { s ->
-                        val selected = s == current
-                        AssistChip(
-                            onClick = { Prefs.posterSize = s; current = s },
-                            label = {
-                                Text(
-                                    when (s) {
-                                        Prefs.PosterSize.SMALL -> "小"
-                                        Prefs.PosterSize.MEDIUM -> "中"
-                                        Prefs.PosterSize.LARGE -> "大"
-                                    }
-                                )
-                            },
-                            colors = AssistChipDefaults.assistChipColors(
-                                containerColor = if (selected) AppColors.Brand.copy(alpha = 0.18f) else AppColors.Surface,
-                                labelColor = if (selected) AppColors.Brand else AppColors.TextSecondary
-                            )
-                        )
-                    }
-                }
-            }
-        }
-
-        // ---------- 缓存 ----------
+        // ---------- 播放缓存 ----------
         SettingCard(title = "播放缓存") {
             var cacheBytes by remember { mutableStateOf(0L) }
             LaunchedEffect(Unit) {

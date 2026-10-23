@@ -31,6 +31,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.data.model.MediaKind
@@ -134,24 +136,35 @@ fun TvGenreScreen(
             )
         }
 
-        // 题材横条：单行可滚动，遥控器左右移动即可
-        LazyRow(
-            modifier = Modifier
+        // 题材横条：单行可滚动，遥控器左右移动即可（底部渐变分隔线）
+        Row(
+            Modifier
                 .fillMaxWidth()
-                .padding(top = 18.dp, bottom = 6.dp),
-            contentPadding = PaddingValues(horizontal = 44.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            items(chips, key = { "chip_${it.first}" }) { (label, k, g) ->
-                TvFilterChip(
-                    text = label,
-                    selected = k == kind && g == genre,
-                    onClick = {
-                        kind = k
-                        genre = g
-                        scope.launch { gridState.scrollToItem(0) }
-                    }
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        1f to AppColors.Bg
+                    )
                 )
+        ) {
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 18.dp, bottom = 8.dp),
+                contentPadding = PaddingValues(horizontal = 44.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(chips, key = { "chip_${it.first}" }) { (label, k, g) ->
+                    TvFilterChip(
+                        text = label,
+                        selected = k == kind && g == genre,
+                        onClick = {
+                            kind = k
+                            genre = g
+                            scope.launch { gridState.scrollToItem(0) }
+                        }
+                    )
+                }
             }
         }
 

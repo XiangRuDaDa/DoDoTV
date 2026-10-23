@@ -44,13 +44,16 @@ class EmbyClient(
 
     data class Auth(val userId: String, val token: String, val userName: String)
 
-    /** 刮削详情：导演/演员/工作室/分级/标语（Emby 服务端已刮削好的元数据） */
+    /** 刮削详情：导演/演员/工作室/分级/标语 + 媒体流信息 */
     data class ItemDetail(
         val tagline: String,
         val officialRating: String,
         val studios: List<String>,
         val directors: List<Person>,
-        val actors: List<Person>
+        val actors: List<Person>,
+        val videoResolution: String = "",
+        val hdrType: String = "",
+        val videoCodec: String = ""
     )
 
     data class Person(val name: String, val role: String, val imageUrl: String)
@@ -235,11 +238,13 @@ class EmbyClient(
         parseItems(json.optJSONArray("Items"))
     }
 
-    /** 刮削信息：标语/分级/工作室/导演/演员（详情页展示用） */
+    /** 刮削信息：标语/分级/工作室/导演/演员 + MediaSources 媒体流信息 */
     suspend fun fetchItemDetail(itemId: String): ItemDetail? = withContext(Dispatchers.IO) {
         val uid = currentUserId() ?: return@withContext null
         val json = runCatching {
-            getJson("/Users/$uid/Items/$itemId", mapOf("Fields" to "People,Studios,Taglines,OfficialRating"))
+            getJson("/Users/$uid/Items/$itemId", mapOf(
+                "Fields" to "People,Studios,Taglines,OfficialRating,MediaSources"
+            ))
         }.getOrNull() ?: return@withContext null
 
         val tagline = json.optJSONArray("Taglines")?.optString(0).orEmpty()
@@ -267,7 +272,69 @@ class EmbyClient(
                 }
             }
         }
-        ItemDetail(tagline, officialRating, studios, directors.take(3), actors.take(12))
+
+        // ---- MediaSources / MediaStreams 解析 ----
+        var videoResolution = ""
+        var hdrType = ""
+        var videoCodec = ""
+        val sources = json.optJSONArray("MediaSources")
+        if (sources != null && sources.length() > 0) {
+            // 取第一个可用的 MediaSource（通常主视频流）
+            val src = sources.optJSONObject(0)
+            val mediaStreams = src?.optJSONArray("MediaStreams")
+            if (mediaStreams != null) {
+                for (i in 0 until mediaStreams.length()) {
+                    val stream = mediaStreams.optJSONObject(i) ?: continue
+                    if (stream.optString("Type") != "Video") continue
+                    val height = stream.optInt("Height", 0)
+                    val codec = stream.optString("Codec", "")
+                    val videoRange = stream.optString("VideoRange", "")
+                    val colorTransfer = stream.optString("ColorTransfer", "")
+                    val hdrMode = stream.optString("HdrMode", "")
+                    val title = stream.optString("Title", "")
+
+                    // 分辨率 → 标签
+                    videoResolution = when {
+                        height >= 2160 -> "4K"
+                        height >= 1080 -> "1080p"
+                        height >= 720 -> "720p"
+                        height > 0 -> "${height}p"
+                        else -> videoResolution
+                    }
+                    // Codec → 短名
+                    videoCodec = when (codec.uppercase()) {
+                        "H264", "AVC" -> "H.264"
+                        "HEVC", "H265" -> "HEVC"
+                        "AV1" -> "AV1"
+                        "VP9" -> "VP9"
+                        "VP8" -> "VP8"
+                        "H263" -> "H.263"
+                        else -> codec.ifBlank { videoCodec }
+                    }
+                    // HDR：优先 Title（Emby 有时把 Dolby Vision 放这里），再看 HdrMode / VideoRange / ColorTransfer
+                    hdrType = when {
+                        title.contains("Dolby Vision", ignoreCase = true) -> "Dolby Vision"
+                        hdrMode.contains("DolbyVision", ignoreCase = true) -> "Dolby Vision"
+                        title.contains("HDR10+", ignoreCase = true) -> "HDR10+"
+                        title.contains("HDR10", ignoreCase = true) -> "HDR10"
+                        hdrMode.contains("HDR10", ignoreCase = true) -> "HDR10"
+                        colorTransfer.contains("SMPTE2084", ignoreCase = true) -> "HDR"
+                        colorTransfer.contains("ARIB", ignoreCase = true) -> "HLG"
+                        videoRange.equals("HDR", ignoreCase = true) -> "HDR"
+                        videoRange.equals("DOVI", ignoreCase = true) -> "Dolby Vision"
+                        else -> hdrType
+                    }
+                    // 只取主视频流
+                    break
+                }
+            }
+        }
+
+        ItemDetail(
+            tagline, officialRating, studios,
+            directors.take(3), actors.take(12),
+            videoResolution, hdrType, videoCodec
+        )
     }
 
     private var cachedUserId: String? = null

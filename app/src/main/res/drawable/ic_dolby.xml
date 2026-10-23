@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simple Icons · Dolby · 官方矢量 logo（D 字母造型） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M0,3.564v16.872h2.488c4.648,0 8.438,-3.788 8.438,-8.436s-3.79,-8.436 -8.438,-8.436H0zM21.512,3.564c-4.648,0 -8.438,3.788 -8.438,8.436s3.79,8.436 8.438,8.436H24V3.564h-2.488z"/>
+</vector>

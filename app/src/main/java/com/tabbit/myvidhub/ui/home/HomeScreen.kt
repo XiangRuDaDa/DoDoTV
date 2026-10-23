@@ -475,23 +475,37 @@ fun GenreScreen(
             )
         }
 
-        // ---------- 标签 ----------
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(tabs) { tab ->
-                FilterChip(
-                    selected = currentTab == tab,
-                    onClick = { kind = tab.kind; genre = tab.genre },
-                    label = { Text(tab.label) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = AppColors.Brand,
-                        selectedLabelColor = Color.White,
-                        containerColor = AppColors.SurfaceHi,
-                        labelColor = AppColors.TextSecondary
+        // ---------- 标签（渐变分隔线 + 紧凑 filter chip） ----------
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        1f to AppColors.Bg
                     )
                 )
+                .padding(vertical = 4.dp)
+        ) {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                items(tabs) { tab ->
+                    val selected = currentTab == tab
+                    FilterChip(
+                        selected = selected,
+                        onClick = { kind = tab.kind; genre = tab.genre },
+                        label = { Text(tab.label, fontWeight = FontWeight.Medium) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = AppColors.Brand,
+                            selectedLabelColor = Color.White,
+                            containerColor = AppColors.SurfaceHi,
+                            labelColor = AppColors.TextSecondary
+                        )
+                    )
+                }
             }
         }
 
