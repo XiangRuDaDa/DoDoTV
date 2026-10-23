@@ -24,10 +24,11 @@ import com.tabbit.myvidhub.ui.sources.SourcesScreen
 /**
  * 电视端外壳（完全独立于手机端 PhoneApp）。
  *
- * 差异是结构性的，不是加个 isTv 参数：
- *   · 没有底部标签栏 —— 遥控器在底部导航上来回按体验极差，改用顶部横排入口；
- *   · 页面切换用淡入淡出，不用左右推入 —— 十英尺距离下横向位移过大会让人失去方位感；
- *   · 全局 BackHandler 逐层回退，符合遥控器返回键直觉。
+ * 导航用栈（navStack）：
+ *   - 进详情、分类、搜索 = 入栈
+ *   - Back 键 = 出栈，回到进入当前页之前的页面（而不是强制跳首页）
+ *   - Sources/Settings 这类"根级 Tab"也用栈维护，但首次进入时可以 reset
+ *   - 遥控器 Back 键会触发 BackHandler；若栈只有 Home 则交给系统默认（退出）
  */
 internal sealed interface TvRoute {
     data object Home : TvRoute
@@ -41,15 +42,15 @@ internal sealed interface TvRoute {
 @Composable
 fun TvApp(vm: LibraryViewModel) {
     val context = LocalContext.current
-    var route by remember { mutableStateOf<TvRoute>(TvRoute.Home) }
+    var navStack by remember { mutableStateOf<List<TvRoute>>(listOf(TvRoute.Home)) }
+    val push: (TvRoute) -> Unit = { navStack = navStack + it }
+    val pop = { if (navStack.size > 1) navStack = navStack.dropLast(1) }
 
-    BackHandler(enabled = route !is TvRoute.Home) {
-        route = TvRoute.Home
-    }
+    BackHandler(enabled = navStack.size > 1) { pop() }
 
     Box(Modifier.fillMaxSize()) {
         AnimatedContent(
-            targetState = route,
+            targetState = navStack.last(),
             transitionSpec = { fadeIn(tween(220)).togetherWith(fadeOut(tween(160))) },
             label = "tv_route",
             modifier = Modifier.fillMaxSize()
@@ -57,34 +58,34 @@ fun TvApp(vm: LibraryViewModel) {
             when (target) {
                 is TvRoute.Home -> TvHomeScreen(
                     vm = vm,
-                    onSearch = { route = TvRoute.Search },
-                    onDetail = { id -> route = TvRoute.Detail(id) },
-                    onGenre = { kind, genre -> route = TvRoute.Genre(kind, genre) },
+                    onSearch = { push(TvRoute.Search) },
+                    onDetail = { id -> push(TvRoute.Detail(id)) },
+                    onGenre = { kind, genre -> push(TvRoute.Genre(kind, genre)) },
                     onPlay = { item: MediaEntity ->
                         context.startActivity(TvPlayerActivity.intent(context, item.id))
                     },
-                    onSources = { route = TvRoute.Sources },
-                    onSettings = { route = TvRoute.Settings }
+                    onSources = { push(TvRoute.Sources) },
+                    onSettings = { push(TvRoute.Settings) }
                 )
 
                 is TvRoute.Search -> TvSearchScreen(
                     vm = vm,
-                    onBack = { route = TvRoute.Home },
-                    onDetail = { id -> route = TvRoute.Detail(id) }
+                    onBack = pop,
+                    onDetail = { id -> push(TvRoute.Detail(id)) }
                 )
 
                 is TvRoute.Genre -> TvGenreScreen(
                     vm = vm,
                     initialKind = target.kind,
                     initialGenre = target.genre,
-                    onBack = { route = TvRoute.Home },
-                    onDetail = { id -> route = TvRoute.Detail(id) }
+                    onBack = pop,
+                    onDetail = { id -> push(TvRoute.Detail(id)) }
                 )
 
                 is TvRoute.Detail -> TvDetailScreen(
                     vm = vm,
                     mediaId = target.mediaId,
-                    onBack = { route = TvRoute.Home },
+                    onBack = pop,
                     onPlay = { id ->
                         context.startActivity(TvPlayerActivity.intent(context, id))
                     }

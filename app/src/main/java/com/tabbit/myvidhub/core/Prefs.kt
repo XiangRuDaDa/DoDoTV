@@ -13,7 +13,22 @@ object Prefs {
     private const val KEY_TMDB_API_KEY = "tmdb_api_key"
     private const val KEY_TMDB_READ_TOKEN = "tmdb_read_token"
     private const val KEY_TMDB_ENABLED = "tmdb_enabled"
+    private const val KEY_POSTER_SIZE = "poster_size"
     private const val KEY_TONE_PREFIX = "detail_tone_"
+
+    /** 缩略图尺寸三档 */
+    enum class PosterSize(val mobileDp: Int, val tvDp: Int) {
+        SMALL(92, 132), MEDIUM(118, 162), LARGE(144, 192)
+    }
+
+    var posterSize: PosterSize
+        get() {
+            val name = sp.getString(KEY_POSTER_SIZE, PosterSize.MEDIUM.name)
+            return runCatching { PosterSize.valueOf(name.orEmpty()) }.getOrDefault(PosterSize.MEDIUM)
+        }
+        set(value) {
+            sp.edit().putString(KEY_POSTER_SIZE, value.name).apply()
+        }
 
     private lateinit var sp: SharedPreferences
 

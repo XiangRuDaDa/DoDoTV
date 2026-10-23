@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.tabbit.myvidhub.core.Prefs
 import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.data.model.MediaKind
 import com.tabbit.myvidhub.ui.LibraryViewModel
@@ -90,7 +91,7 @@ fun HomeScreen(
     val favorites by vm.favorites.collectAsStateWithLifecycle()
     val library by vm.library.collectAsStateWithLifecycle()
 
-    val cardWidth = if (isTv) 150.dp else 112.dp
+    val cardWidth = if (isTv) Prefs.posterSize.tvDp.dp else Prefs.posterSize.mobileDp.dp
 
     // 优先用有背景图的条目做精选，不足时用有海报的补
     val heroItems = remember(featured, library) {

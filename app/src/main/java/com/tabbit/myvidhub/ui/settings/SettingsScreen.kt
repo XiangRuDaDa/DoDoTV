@@ -11,10 +11,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.launch
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -22,10 +22,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +38,7 @@ import com.tabbit.myvidhub.core.Prefs
 import com.tabbit.myvidhub.ui.components.TmdbDisclaimer
 import com.tabbit.myvidhub.ui.LibraryViewModel
 import com.tabbit.myvidhub.ui.theme.AppColors
+import kotlinx.coroutines.launch
 
 private const val PREFS_NAME = "app_prefs"
 private const val KEY_FORCE_TV = "force_tv_mode"
@@ -243,6 +245,43 @@ fun SettingsScreen(vm: LibraryViewModel) {
         if (tmdbOn) {
             SettingCard(title = "数据来源与声明") {
                 TmdbDisclaimer()
+            }
+        }
+
+        // ---------- 界面 ----------
+        SettingCard(title = "界面") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "首页缩略图大小",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = AppColors.TextPrimary
+                )
+                val sizes = Prefs.PosterSize.values()
+                var current by remember { mutableStateOf(Prefs.posterSize) }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    sizes.forEach { s ->
+                        val selected = s == current
+                        AssistChip(
+                            onClick = { Prefs.posterSize = s; current = s },
+                            label = {
+                                Text(
+                                    when (s) {
+                                        Prefs.PosterSize.SMALL -> "小"
+                                        Prefs.PosterSize.MEDIUM -> "中"
+                                        Prefs.PosterSize.LARGE -> "大"
+                                    }
+                                )
+                            },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = if (selected) AppColors.Brand.copy(alpha = 0.18f) else AppColors.Surface,
+                                labelColor = if (selected) AppColors.Brand else AppColors.TextSecondary
+                            )
+                        )
+                    }
+                }
             }
         }
 

@@ -240,9 +240,12 @@ class TvPlayerActivity : ComponentActivity() {
             builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
             textDisabled = true
         } else {
-            val group = track.group ?: return
+            // 关键：从 player.currentTracks 里找当前最新的 group（快照 group 可能已失效）
+            val targetMediaGroup = track.group?.mediaTrackGroup ?: return
+            val freshGroup = p.currentTracks.groups.firstOrNull { it.mediaTrackGroup === targetMediaGroup }
+                ?: return
             builder.setTrackTypeDisabled(track.type, false)
-            builder.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, track.trackIndex))
+            builder.setOverrideForType(TrackSelectionOverride(freshGroup.mediaTrackGroup, track.trackIndex))
             if (track.type == C.TRACK_TYPE_TEXT) textDisabled = false
         }
         p.trackSelectionParameters = builder.build()

@@ -1,10 +1,12 @@
 package com.tabbit.myvidhub.ui.tv
 
+import android.view.KeyEvent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -21,9 +23,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -42,16 +46,19 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.tabbit.myvidhub.core.Prefs
 import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.data.model.MediaKind
 import com.tabbit.myvidhub.ui.LibraryViewModel
-import com.tabbit.myvidhub.ui.components.subtitle
 import com.tabbit.myvidhub.ui.theme.AppColors
 import kotlinx.coroutines.delay
 
@@ -63,6 +70,11 @@ import kotlinx.coroutines.delay
  *   · 首屏是一整屏的横版主视觉，标题与按钮压在左下，进入即有内容感；
  *   · 每个分区是无限横向海报行，聚焦卡片放大 10% 并描白边，保证三米外也能看清选中项；
  *   · 分区切换用纵向滚动，符合电视「上下换类目、左右换条目」的直觉。
+ *
+ * 遥控器焦点导航：
+ *   TvTopBar 在 Box 顶层悬浮（和 LazyColumn 平级），焦点系统默认不跨子树导航。
+ *   通过 onPreviewKeyEvent 拦截 KEYCODE_DPAD_DOWN → 手动把焦点交给 TvHero 播放按钮，
+ *   让 LazyColumn 内的嵌套 LazyRow 继续处理后续的上下方向键。
  */
 @Composable
 fun TvHomeScreen(
@@ -74,18 +86,12 @@ fun TvHomeScreen(
     onSources: () -> Unit,
     onSettings: () -> Unit
 ) {
-    val continueList by vm.continueWatching.collectAsStateWithLifecycle()
-    val featured by vm.featured.collectAsStateWithLifecycle()
-    val favorites by vm.favorites.collectAsStateWithLifecycle()
-    val recentMovies by vm.recentMovies.collectAsStateWithLifecycle()
-    val recentSeries by vm.recentSeries.collectAsStateWithLifecycle()
-    val recentAnime by vm.recentAnime.collectAsStateWithLifecycle()
     val library by vm.library.collectAsStateWithLifecycle()
     val sources by vm.sources.collectAsStateWithLifecycle()
 
-    // 主视觉：优先有横版背景图的条目，不足时用海报补位
-    val heroItems = remember(featured, library) {
-        val primary = featured.filter { it.backdropUrl.isNotBlank() }
+    // 优先用有横版背景图的条目做精选，不足时用海报补位
+    val heroItems = remember(library) {
+        val primary = library.filter { it.backdropUrl.isNotBlank() }
         if (primary.size >= 3) primary.take(5)
         else (primary + library.filter { it.posterUrl.isNotBlank() })
             .distinctBy { it.id }
@@ -103,24 +109,32 @@ fun TvHomeScreen(
     }
     val hero = heroItems.getOrNull(heroIndex.coerceIn(0, (heroItems.size - 1).coerceAtLeast(0)))
 
-    val firstFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+    val listState = rememberLazyListState()
+    // 滚动距离驱动顶栏透明度（下滑到 heroHeight 后淡出）
+    val configuration = LocalConfiguration.current
+    val heroCollapseDistPx = (configuration.screenHeightDp * 0.40f).toInt()
+    val rawFade = if (heroCollapseDistPx == 0) 0f
+        else (listState.firstVisibleItemScrollOffset.toFloat() / heroCollapseDistPx).coerceIn(0f, 1f)
+    val topBarAlpha by animateFloatAsState(targetValue = 1f - rawFade, label = "tv_topbar_fade")
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(AppColors.Bg)
-    ) {
+    // 焦点 requester 链：TvTopBar ↔ TvHero 播放按钮 ↔ 第一个 TvPosterRow
+    val topBarFirstFocus = remember { FocusRequester() }
+    val heroPlayFocus = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) { runCatching { heroPlayFocus.requestFocus() } }
+
+    Box(Modifier.fillMaxSize().background(AppColors.Bg)) {
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 44.dp)
         ) {
-            // ---------- 主视觉（置顶，顶部入口条悬浮其上） ----------
+            // ---------- 主视觉（置顶，TvTopBar 悬浮其上） ----------
             if (hero != null) {
                 item {
                     TvHero(
                         item = hero,
-                        focusRequester = firstFocus,
+                        playFocusRequester = heroPlayFocus,
                         onPlay = { onPlay(hero) },
                         onDetail = { onDetail(hero.id) }
                     )
@@ -136,80 +150,60 @@ fun TvHomeScreen(
                 }
             }
 
-            // ---------- 继续观看 ----------
-            if (continueList.isNotEmpty()) {
-                item {
-                    TvSectionTitle("继续观看", trailing = { TvMoreButton { onGenre(null, null) } })
-                }
-                item {
-                    TvPosterRow(
-                        items = continueList,
-                        onDetail = onDetail,
-                        onPlay = onPlay
-                    )
-                }
-            }
-
-            // ---------- 我的收藏 ----------
-            if (favorites.isNotEmpty()) {
-                item {
-                    TvSectionTitle("我的收藏") { TvMoreButton { onGenre(null, null) } }
-                }
-                item { TvPosterRow(items = favorites, onDetail = onDetail) }
-            }
-
-            // ---------- 电影 ----------
-            if (recentMovies.isNotEmpty()) {
-                item {
-                    TvSectionTitle("电影") { TvMoreButton { onGenre(MediaKind.MOVIE, null) } }
-                }
-                item { TvPosterRow(items = recentMovies, onDetail = onDetail) }
-            }
-
-            // ---------- 剧集 ----------
-            if (recentSeries.isNotEmpty()) {
-                item {
-                    TvSectionTitle("剧集") { TvMoreButton { onGenre(MediaKind.SERIES, null) } }
-                }
-                item { TvPosterRow(items = recentSeries, onDetail = onDetail) }
-            }
-
-            // ---------- 动漫 ----------
-            if (recentAnime.isNotEmpty()) {
-                item {
-                    TvSectionTitle("动漫") { TvMoreButton { onGenre(null, null) } }
-                }
-                item { TvPosterRow(items = recentAnime, onDetail = onDetail) }
-            }
+            // ---------- 动态分区：根据 library 实际存在的 kind 渲染 ----------
+            DynamicTvGallerySections(
+                library = library,
+                onMore = onGenre,
+                onDetail = onDetail
+            )
         }
 
-        // ---------- 透明悬浮顶部入口条（压在主视觉之上） ----------
+        // ---------- 透明悬浮顶部入口条（压在主视觉之上，滚动淡出） ----------
         TvTopBar(
             count = library.size,
             sourceCount = sources.size,
             scanning = vm.scanning,
+            alpha = topBarAlpha,
+            firstFocusRequester = topBarFirstFocus,
             onSearch = onSearch,
             onSources = onSources,
             onSettings = onSettings,
-            onRefresh = { vm.scanAll() }
+            onRefresh = { vm.scanAll() },
+            // 拦截 KEYCODE_DPAD_DOWN → 把焦点交给 TvHero 播放按钮
+            onDpadDownToHero = { heroPlayFocus.requestFocus() }
         )
     }
 }
 
-/** 顶部入口条：左边品牌与统计，右边可聚焦的操作按钮 */
+/** 顶部入口条：左边品牌与统计，右边可聚焦的操作按钮。滚动时淡出，顶栏按钮按下键交给主视觉。 */
 @Composable
 private fun TvTopBar(
     count: Int,
     sourceCount: Int,
     scanning: Boolean,
+    alpha: Float,
+    firstFocusRequester: FocusRequester,
     onSearch: () -> Unit,
     onSources: () -> Unit,
     onSettings: () -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onDpadDownToHero: () -> Unit
 ) {
+    val enabled = alpha > 0.1f  // 顶栏淡出后不再可聚焦，避免焦点卡住
+
     Row(
         Modifier
+            .focusable(enabled = enabled)
             .fillMaxWidth()
+            .graphicsLayer { this.alpha = alpha }
+            // 顶栏按钮按下键时，手动把焦点交给下方主视觉的播放按钮
+            .onPreviewKeyEvent { event ->
+                if (enabled && event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
+                    (event.nativeKeyEvent?.keyCode ?: 0) == KeyEvent.KEYCODE_DPAD_DOWN) {
+                    onDpadDownToHero()
+                    true
+                } else false
+            }
             .padding(start = 44.dp, end = 44.dp, top = 26.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -233,7 +227,11 @@ private fun TvTopBar(
             TvPillButton("同步", primary = false, onClick = onRefresh)
             Spacer(Modifier.width(12.dp))
         }
-        TvPillButton("搜索", primary = false, onClick = onSearch)
+        // 第一个按钮（搜索）挂上 focusRequester，让 Dpad Up 能回到顶栏
+        TvPillButton(
+            "搜索", primary = false, onClick = onSearch,
+            modifier = Modifier.focusRequester(firstFocusRequester)
+        )
         Spacer(Modifier.width(12.dp))
         TvPillButton("来源", primary = false, onClick = onSources)
         Spacer(Modifier.width(12.dp))
@@ -245,7 +243,7 @@ private fun TvTopBar(
 @Composable
 private fun TvHero(
     item: MediaEntity,
-    focusRequester: FocusRequester,
+    playFocusRequester: FocusRequester,
     onPlay: () -> Unit,
     onDetail: () -> Unit
 ) {
@@ -261,7 +259,6 @@ private fun TvHero(
             modifier = Modifier.fillMaxSize()
         )
 
-        // 左侧压暗保证文字可读，底部渐隐让主视觉和下面的行自然衔接
         Box(
             Modifier
                 .fillMaxSize()
@@ -291,15 +288,12 @@ private fun TvHero(
                 .padding(start = 44.dp, end = 44.dp, bottom = 44.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // 标题：优先用刮削到的 ClearLogo（透明 PNG 艺术字），没有才回落文字
             if (item.logoUrl.isNotBlank()) {
                 AsyncImage(
                     model = item.logoUrl,
                     contentDescription = item.title,
                     contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .height(96.dp)
-                        .widthIn(max = 460.dp)
+                    modifier = Modifier.height(96.dp).widthIn(max = 460.dp)
                 )
             } else {
                 Text(
@@ -332,7 +326,7 @@ private fun TvHero(
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 TvPillButton(
                     text = if (item.positionMs > 5_000L) "继续播放" else "立即播放",
-                    modifier = Modifier.focusRequester(focusRequester),
+                    modifier = Modifier.focusRequester(playFocusRequester),
                     primary = true,
                     onClick = onPlay
                 )
@@ -346,13 +340,12 @@ private fun TvHero(
 @Composable
 private fun TvPosterRow(
     items: List<MediaEntity>,
-    onDetail: (Long) -> Unit,
-    onPlay: ((MediaEntity) -> Unit)? = null
+    onDetail: (Long) -> Unit
 ) {
     LazyRow(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = TvRowPadding, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(TvRowSpacing)
+        contentPadding = PaddingValues(horizontal = 44.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         items(items, key = { "tv_${it.id}" }) { item ->
             TvPosterCard(
@@ -360,5 +353,41 @@ private fun TvPosterRow(
                 onClick = { onDetail(item.id) }
             )
         }
+    }
+}
+
+/**
+ * 动态分区：根据 library 里实际存在的 kind 渲染画廊块。
+ * 有 MOVIE → 电影；有 SERIES → 剧集；有 genres 含「动漫」→ 动漫。
+ * 空的跳过，不写死分区标题。
+ */
+private fun LazyListScope.DynamicTvGallerySections(
+    library: List<MediaEntity>,
+    onMore: (kind: String?, genre: String?) -> Unit,
+    onDetail: (Long) -> Unit
+) {
+    if (library.isEmpty()) return
+
+    val animeKeywords = listOf("动漫", "动画", "anime")
+    val movies = library.filter { it.kind == MediaKind.MOVIE }.take(12)
+    val series = library.filter { it.kind == MediaKind.SERIES }.take(12)
+    val anime = library.filter {
+        (it.kind == MediaKind.SERIES || it.kind == MediaKind.MOVIE) &&
+            animeKeywords.any { kw -> it.genres.lowercase().contains(kw.lowercase()) }
+    }.take(12)
+
+    data class Block(val title: String, val kind: String?, val genre: String?, val items: List<MediaEntity>)
+    val blocks = mutableListOf<Block>()
+    if (movies.isNotEmpty()) blocks += Block("电影", MediaKind.MOVIE, null, movies)
+    if (series.isNotEmpty()) blocks += Block("剧集", MediaKind.SERIES, null, series)
+    if (anime.isNotEmpty()) blocks += Block("动漫", null, "动漫", anime)
+
+    for (b in blocks) {
+        item {
+            TvSectionTitle(b.title) {
+                TvMoreButton { onMore(b.kind, b.genre) }
+            }
+        }
+        item { TvPosterRow(items = b.items, onDetail = onDetail) }
     }
 }

@@ -39,6 +39,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
 import coil.compose.AsyncImage
+import com.tabbit.myvidhub.core.Prefs
 import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.ui.components.subtitle
 import com.tabbit.myvidhub.ui.theme.AppColors
@@ -103,7 +104,7 @@ fun TvPosterCard(
     item: MediaEntity,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    width: Dp = 158.dp
+    width: Dp = Prefs.posterSize.tvDp.dp
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
@@ -153,25 +154,15 @@ fun TvPosterCard(
                 }
             }
         }
-        Column(Modifier.padding(horizontal = 8.dp, vertical = 7.dp)) {
-            Text(
-                item.title,
-                color = AppColors.TextPrimary,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            val sub = item.subtitle()
-            if (sub.isNotBlank()) {
-                Text(
-                    sub,
-                    color = AppColors.TextTertiary,
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1
-                )
-            }
-        }
+        Text(
+            item.title,
+            color = AppColors.TextPrimary,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp)
+        )
     }
 }
 

@@ -493,8 +493,7 @@ fun TvDetailScreen(
                 }
             }
         }
-
-        TvBackButton(onBack = onBack)
+        // 遥控器 Back 键 = TvApp.BackHandler 统一处理，不再显示页面内返回按钮
     }
 }
 

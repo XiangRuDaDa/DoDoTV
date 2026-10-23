@@ -102,8 +102,7 @@ fun TvSearchScreen(
                 .padding(start = 44.dp, end = 44.dp, top = 28.dp, bottom = 18.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TvBackButton(onBack = onBack)
-            Spacer(Modifier.width(20.dp))
+            // 遥控器 Back 键统一由 TvApp.BackHandler 处理，不再放页面内返回按钮
             TvSearchField(
                 value = keyword,
                 focusRequester = fieldFocus,

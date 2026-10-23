@@ -120,8 +120,7 @@ fun TvGenreScreen(
                 .padding(start = 44.dp, end = 44.dp, top = 28.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TvBackButton(onBack = onBack)
-            Spacer(Modifier.width(22.dp))
+            // 遥控器 Back 键统一由 TvApp.BackHandler 处理
             Text(
                 chips.firstOrNull { it.second == kind && it.third == genre }?.first ?: "全部",
                 color = AppColors.TextPrimary,
