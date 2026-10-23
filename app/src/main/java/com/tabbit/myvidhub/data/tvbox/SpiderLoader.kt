@@ -77,6 +77,8 @@ class SpiderLoader(private val context: Context) {
                 fail("spider 包 MD5 校验失败（期望 $md5）")
             }
         }
+        // Android 14（targetSdk 34）禁止从可写文件加载 dex，必须置为只读
+        if (jarFile.canWrite()) jarFile.setReadOnly()
         jars[key] = jarFile.absolutePath
 
         // 2) 壳 dex 的 classloader
@@ -96,6 +98,9 @@ class SpiderLoader(private val context: Context) {
         // 4) 扫描 Init 写出的解密 dex，重组 classpath
         val decrypted = scanDecryptedDex(initStarted)
         Log.d(TAG, "Init 完成，解密 dex ${decrypted.size} 个：${decrypted.joinToString { File(it).name }}")
+
+        // 解密出的 dex 同样必须只读，否则 Android 14 拒载
+        decrypted.forEach { runCatching { File(it).takeIf { f -> f.canWrite() }?.setReadOnly() } }
 
         val classpath = (listOf(jarFile.absolutePath) + decrypted).joinToString(File.pathSeparator)
         val loader = if (classpath == jarFile.absolutePath) stubLoader
@@ -180,6 +185,7 @@ class SpiderLoader(private val context: Context) {
         val jarPath = jars[loaderKey] ?: return null
         val decrypted = scanDecryptedDex(System.currentTimeMillis() - 60_000)
         if (decrypted.isEmpty()) return null
+        decrypted.forEach { runCatching { File(it).takeIf { f -> f.canWrite() }?.setReadOnly() } }
 
         val classpath = (listOf(jarPath) + decrypted).joinToString(File.pathSeparator)
         val rebuilt = runCatching {
@@ -211,6 +217,8 @@ class SpiderLoader(private val context: Context) {
     }
 
     private fun download(url: String, target: File) {
+        // 旧文件可能是只读的（上一轮已置只读），先恢复可写再覆盖
+        if (target.exists()) target.setWritable(true)
         val request = Request.Builder().url(url).get().build()
         http.newCall(request).execute().use { resp ->
             if (!resp.isSuccessful) fail("下载 spider 包失败 HTTP ${resp.code}")
