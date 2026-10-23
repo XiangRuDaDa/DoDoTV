@@ -1,5 +1,6 @@
 package com.tabbit.myvidhub.data.tvbox
 
+import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -12,18 +13,22 @@ import java.util.concurrent.TimeUnit
 /**
  * TVBox 客户端。
  *
- * 支持两种「源」：
+ * 支持两类「源」：
  * 1) 苹果CMS / MacCMS 风格 JSON 接口（type 1）：
  *      ?ac=videolist&pg=1     → 列表
  *      ?ac=videolist&wd=关键词 → 搜索
  *      ?ac=detail&ids=vodId   → 详情（含播放列表）
- * 2) TVBox 配置 JSON（形如 {"sites":[{"type":1,"api":"..."}]}）：
- *      自动取出其中 type=1 的 CMS 接口，依次聚合首页列表
+ * 2) TVBox 配置 JSON（形如 {"sites":[...]}）：
+ *      · 自动取出 type=1 的 CMS 接口，依次聚合首页列表
+ *      · 同时取出 type=3 的 Spider 爬虫站点，通过 [SpiderLoader] 动态加载并反射调用
  *
- * 与之前版本最大的区别：网络/解析失败不再静默返回空，而是抛出带中文说明的异常，
- * 由上层展示给用户 —— 否则用户永远只看到「未获取到内容」，无法定位问题。
+ * type=3 是 TVBox 现代配置的主力格式，爬虫逻辑封装在 spider JAR 里，
+ * 运行时 DexClassLoader 加载 + 反射调用 Spider 基类的 5 个标准方法。
  */
-class TvBoxClient(endpoint: String) {
+class TvBoxClient(
+    endpoint: String,
+    context: Context? = null
+) {
 
     /** 用户可能只填了 192.168.1.2:8080 或 example.com/api.php/provide/vod/，这里自动补协议 */
     private val base: String = endpoint.trim()
@@ -43,6 +48,15 @@ class TvBoxClient(endpoint: String) {
         .callTimeout(30, TimeUnit.SECONDS)
         .build()
 
+    /** Spider 加载器（type 3 需要 Android Context） */
+    private val spiderLoader: SpiderLoader? = context?.applicationContext?.let { SpiderLoader(it) }
+
+    /** 配置根级别的 spider URL（type 3 共用同一个 JAR） */
+    private var configSpiderUrl: String = ""
+
+    /** type 3 spider 站点列表 */
+    private var spiderSites: List<SpiderSite> = emptyList()
+
     data class Vod(
         val vodId: String,
         val name: String,
@@ -57,13 +71,33 @@ class TvBoxClient(endpoint: String) {
         val siteKey: String = "",
         val siteName: String = "",
         /** 解析后的播放源列表：源名 → 剧集列表 */
-        val playSources: List<PlaySource> = emptyList()
+        var playSources: List<PlaySource> = emptyList()
     )
 
     data class PlaySource(val name: String, val episodes: List<Episode>)
     data class Episode(val name: String, val url: String)
 
     private data class CmsSite(val key: String, val name: String, val api: String)
+    private data class SpiderSite(val key: String, val name: String, val api: String, val ext: Any?)
+
+    companion object {
+        /** CatVodResultParser 可调用的 URL 归一化（顶级函数，无 origin 上下文做相对 → 绝对转换） */
+        internal fun AbsoluteUrl(raw: String): String {
+            val url = raw.trim()
+            return when {
+                url.isBlank() -> ""
+                url.startsWith("http://") || url.startsWith("https://") -> url
+                url.startsWith("//") -> "https:$url"
+                else -> url
+            }
+        }
+
+        /** 播放 URL 过滤：只保留 http(s) 直链 */
+        internal fun AbsolutePlayUrl(raw: String): String? {
+            val url = AbsoluteUrl(raw)
+            return if (url.startsWith("http://") || url.startsWith("https://")) url else null
+        }
+    }
 
     // ---------- HTTP ----------
 
@@ -105,36 +139,66 @@ class TvBoxClient(endpoint: String) {
     /**
      * 首页列表。
      * · 普通 CMS 接口：直接取第一页
-     * · TVBox 配置：解析出所有 type=1 站点，聚合各自第一页，最多返回 limit 条
-     * · 部分 CMS 在缺少 t（分类）时返回空：自动取 ac=list 的第一个分类重试
+     * · TVBox 配置：
+     *   - type=1 CMS 站点：聚合各自第一页
+     *   - type=3 Spider 站点：通过 SpiderLoader 取 homeContent
      */
     suspend fun homeContent(limit: Int = 100): List<Vod> = withContext(Dispatchers.IO) {
-        val root = requestJson(base, mapOf("ac" to "videolist", "pg" to "1"))
+        val root = runCatching { requestJson(base, mapOf("ac" to "videolist", "pg" to "1")) }.getOrNull()
+        if (root != null) {
+            responseList(root)?.let { return@withContext parseList(it, "", "").take(limit) }
 
-        responseList(root)?.let { return@withContext parseList(it, "", "").take(limit) }
+            val cmsSites = parseCmsSites(root)
+            val spSites = parseSpiderSites(root)
 
-        val sites = parseSites(root)
-        if (sites.isNotEmpty()) {
-            val merged = LinkedHashMap<String, Vod>()
-            for (site in sites.take(8)) {
-                val json = runCatching {
-                    requestJson(site.api, mapOf("ac" to "videolist", "pg" to "1"))
-                }.getOrNull() ?: continue
-                val list = responseList(json) ?: continue
-                parseList(list, site.key, site.name).forEach {
-                    merged["${site.key}:${it.vodId}"] = it
+            if (cmsSites.isNotEmpty() || spSites.isNotEmpty()) {
+                configSpiderUrl = root.optString("spider")
+
+                val merged = LinkedHashMap<String, Vod>()
+                // 先拉 type 1 CMS 站点（更稳定）
+                for (site in cmsSites.take(6)) {
+                    val json = runCatching {
+                        requestJson(site.api, mapOf("ac" to "videolist", "pg" to "1"))
+                    }.getOrNull() ?: continue
+                    val list = responseList(json) ?: continue
+                    parseList(list, site.key, site.name).forEach {
+                        merged["${site.key}:${it.vodId}"] = it
+                    }
+                    if (merged.size >= limit) break
                 }
-                if (merged.size >= limit) break
+
+                // 再拉 type 3 spider 站点
+                if (merged.size < limit && spSites.isNotEmpty() && spiderLoader != null && configSpiderUrl.isNotBlank()) {
+                    loadSpiderHome(spSites, merged, limit)
+                }
+                spiderSites = spSites
+                return@withContext merged.values.take(limit).toList()
             }
-            return@withContext merged.values.take(limit).toList()
         }
 
-        // 兜底：先拿分类，再按第一个分类拉列表
+        // 兜底：纯 CMS 接口，用 ac=list 取第一个分类重试
         val firstCategory = runCatching { categories() }.getOrDefault(emptyList()).firstOrNull()
             ?: return@withContext emptyList()
         val retry = requestJson(base, mapOf("ac" to "videolist", "t" to firstCategory.first, "pg" to "1"))
         responseList(retry)?.let { return@withContext parseList(it, "", "").take(limit) }
         emptyList()
+    }
+
+    /** type 3 spider 站点首页聚合 */
+    private suspend fun loadSpiderHome(
+        sites: List<SpiderSite>,
+        merged: LinkedHashMap<String, Vod>,
+        limit: Int
+    ) = withContext(Dispatchers.IO) {
+        val loaderKey = runCatching { spiderLoader!!.ensureLoaded(configSpiderUrl) }.getOrNull() ?: return@withContext
+        for (site in sites.take(3)) {
+            if (merged.size >= limit) break
+            val proxy = spiderLoader!!.getSpider(loaderKey, site.api, site.ext) ?: continue
+            val json = proxy.homeContent(filter = true) ?: continue
+            CatVodResultParser.parseVodList(json, site.key, site.name).forEach {
+                merged["${site.key}:${it.vodId}"] = it
+            }
+        }
     }
 
     suspend fun category(typeId: String, page: Int = 1): List<Vod> = withContext(Dispatchers.IO) {
@@ -152,25 +216,77 @@ class TvBoxClient(endpoint: String) {
      * @param siteKey 来自 TVBox 配置时按站点定位接口；空表示直接使用填写的接口
      */
     suspend fun detail(vodId: String, siteKey: String = ""): Vod? = withContext(Dispatchers.IO) {
+        // 先尝试直接 CMS 接口（用户填的就是 CMS API 地址）
         if (siteKey.isBlank()) {
-            fetchDetail(base, vodId, "", "")?.let { return@withContext it }
-        } else {
-            val sites = runCatching { resolveSites() }.getOrDefault(emptyList())
-            sites.firstOrNull { it.key == siteKey }?.let { site ->
-                fetchDetail(site.api, vodId, site.key, site.name)?.let { return@withContext it }
-            }
-            // 配置更新后 key 可能变化，逐个尝试
-            for (site in sites) {
-                fetchDetail(site.api, vodId, site.key, site.name)?.let { return@withContext it }
-            }
-            return@withContext null
+            fetchCmsDetail(base, vodId, "", "")?.let { return@withContext it }
         }
 
-        // 填的是 TVBox 配置、但旧数据没有 siteKey：逐个站点尝试
-        for (site in runCatching { resolveSites() }.getOrDefault(emptyList())) {
-            fetchDetail(site.api, vodId, site.key, site.name)?.let { return@withContext it }
+        val root = runCatching { requestJson(base, emptyMap()) }.getOrNull()
+        val cmsSites = root?.let { parseCmsSites(it) } ?: emptyList()
+        val spSites = root?.let { parseSpiderSites(it) } ?: spiderSites
+
+        // 优先按 siteKey 精确匹配
+        if (siteKey.isNotBlank()) {
+            cmsSites.firstOrNull { it.key == siteKey }?.let { site ->
+                fetchCmsDetail(site.api, vodId, site.key, site.name)?.let { return@withContext it }
+            }
+            // Spider 路径
+            if (spSites.isNotEmpty() && root != null) {
+                configSpiderUrl = root.optString("spider")
+            }
+            spSites.firstOrNull { it.key == siteKey }?.let { site ->
+                val result = fetchSpiderDetail(site, vodId)
+                if (result != null) return@withContext result
+            }
+        }
+
+        // 兜底：所有 CMS 站点逐个尝试
+        for (site in cmsSites) {
+            fetchCmsDetail(site.api, vodId, site.key, site.name)?.let { return@withContext it }
+        }
+
+        // 再兜底：所有 Spider 站点
+        if (spSites.isNotEmpty()) {
+            if (configSpiderUrl.isBlank() && root != null) configSpiderUrl = root.optString("spider")
+            if (configSpiderUrl.isBlank() && spSites.any { true /* any */ }) {
+                // spider URL 可能从之前的 homeContent 已经拿到了
+            }
+            for (site in spSites) {
+                fetchSpiderDetail(site, vodId)?.let { return@withContext it }
+            }
+        }
+
+        // 最后兜底：纯 CMS 接口
+        if (siteKey.isBlank()) {
+            fetchCmsDetail(base, vodId, "", "")?.let { return@withContext it }
         }
         null
+    }
+
+    private suspend fun fetchSpiderDetail(site: SpiderSite, vodId: String): Vod? {
+        val loader = spiderLoader ?: return null
+        if (configSpiderUrl.isBlank()) return null
+        val loaderKey = runCatching { loader.ensureLoaded(configSpiderUrl) }.getOrNull() ?: return null
+        val proxy = loader.getSpider(loaderKey, site.api, site.ext) ?: return null
+        val json = proxy.detailContent(listOf(vodId)) ?: return null
+        val vod = CatVodResultParser.parseDetail(json, site.key, site.name) ?: return null
+
+        // 如果 playSources 里的播放地址不是 http 直链，还需要 playerContent 解析
+        val needsResolve = vod.playSources.any { it.episodes.any { ep ->
+            !ep.url.startsWith("http://") && !ep.url.startsWith("https://")
+        } }
+        if (needsResolve) {
+            vod.playSources = vod.playSources.map { src ->
+                src.copy(episodes = src.episodes.map { ep ->
+                    val resolved = runCatching {
+                        val pcJson = proxy.playerContent(src.name, ep.url, emptyList())
+                        pcJson?.let { CatVodResultParser.parsePlayer(it) }?.url ?: ep.url
+                    }.getOrDefault(ep.url)
+                    ep.copy(url = resolved)
+                })
+            }
+        }
+        return vod
     }
 
     suspend fun categories(): List<Pair<String, String>> = withContext(Dispatchers.IO) {
@@ -186,7 +302,7 @@ class TvBoxClient(endpoint: String) {
 
     // ---------- 内部 ----------
 
-    private fun fetchDetail(api: String, vodId: String, siteKey: String, siteName: String): Vod? {
+    private fun fetchCmsDetail(api: String, vodId: String, siteKey: String, siteName: String): Vod? {
         val json = runCatching {
             requestJson(api, mapOf("ac" to "detail", "ids" to vodId))
         }.getOrNull() ?: return null
@@ -197,7 +313,7 @@ class TvBoxClient(endpoint: String) {
     }
 
     /** 配置 JSON 里的 type=1（CMS）站点 */
-    private fun parseSites(root: JSONObject): List<CmsSite> {
+    private fun parseCmsSites(root: JSONObject): List<CmsSite> {
         val arr = root.optJSONArray("sites") ?: return emptyList()
         val out = ArrayList<CmsSite>()
         for (i in 0 until arr.length()) {
@@ -207,14 +323,27 @@ class TvBoxClient(endpoint: String) {
             if (!api.startsWith("http", true)) continue
             val rawKey = o.optString("key").ifBlank { o.optString("name") }.ifBlank { "site$i" }
             val name = o.optString("name").ifBlank { rawKey }
-            // key 会拼进 remoteId，去掉分隔符避免解析歧义
             out += CmsSite(rawKey.replace(":", ""), name, api)
         }
         return out.distinctBy { it.key }
     }
 
-    private fun resolveSites(): List<CmsSite> =
-        parseSites(requestJson(base, mapOf("ac" to "videolist", "pg" to "1")))
+    /** 配置 JSON 里的 type=3（Spider）站点 */
+    private fun parseSpiderSites(root: JSONObject): List<SpiderSite> {
+        val arr = root.optJSONArray("sites") ?: return emptyList()
+        val out = ArrayList<SpiderSite>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (o.optString("type") != "3") continue
+            val api = o.optString("api").trim()
+            if (api.isBlank()) continue
+            val rawKey = o.optString("key").ifBlank { o.optString("name") }.ifBlank { "spider$i" }
+            val name = o.optString("name").ifBlank { rawKey }
+            val ext = o.opt("ext")
+            out += SpiderSite(rawKey.replace(":", ""), name, api, ext)
+        }
+        return out.distinctBy { it.key }
+    }
 
     private fun parseList(arr: JSONArray?, siteKey: String, siteName: String): List<Vod> {
         if (arr == null) return emptyList()

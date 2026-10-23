@@ -24,7 +24,7 @@ import kotlinx.coroutines.withContext
  * · TVBox：列表只入库「剧集壳」，分集等用户点进详情页再按需拉取
  *   （CMS 接口的详情才带播放地址，提前全量拉取会打爆请求量）
  */
-class MediaRepository(context: Context) {
+class MediaRepository(private val context: Context) {
 
     private val db: AppDatabase = MyVidHubApp.instance.db
     private val sourceDao = db.sourceDao()
@@ -301,7 +301,7 @@ class MediaRepository(context: Context) {
     /** 同步 TVBox 首页列表（只入库剧集壳） */
     suspend fun syncTvBox(source: SourceEntity, onProgress: (Int) -> Unit = {}): Int =
         withContext(Dispatchers.IO) {
-            val client = TvBoxClient(source.location)
+            val client = TvBoxClient(source.location, context)
             val list = client.homeContent()
             if (list.isEmpty()) {
                 throw IllegalStateException("接口未返回任何影片，请确认地址能返回 ac=videolist 的 JSON")
@@ -341,7 +341,7 @@ class MediaRepository(context: Context) {
         remoteId: String
     ): List<TvBoxClient.PlaySource> = withContext(Dispatchers.IO) {
         val (siteKey, vodId) = parseTvBoxKey(source.id, remoteId)
-        val client = TvBoxClient(source.location)
+        val client = TvBoxClient(source.location, context)
         val detail = client.detail(vodId, siteKey) ?: return@withContext emptyList()
 
         val shell = mediaDao.byRemoteId(remoteId)

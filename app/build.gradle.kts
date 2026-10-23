@@ -98,6 +98,10 @@ dependencies {
     // 网络 / JSON
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // TVBox type 3 爬虫运行时（Jsoup + Fastjson —— spider JAR 依赖这些类在 Dex 里解析）
+    implementation("org.jsoup:jsoup:1.17.2")
+    implementation("com.alibaba:fastjson:1.2.83")
+
     // 本地媒体库
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
