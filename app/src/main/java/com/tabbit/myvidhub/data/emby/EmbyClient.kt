@@ -350,6 +350,46 @@ class EmbyClient(
         )
     }
 
+    /**
+     * POST /Items/{itemId}/PlaybackInfo —— Emby HLS 播放前置步骤。
+     * 返回 PlaySessionId + MediaSourceId，用于构造 master.m3u8 URL。
+     * 反代服务器上 direct stream GET 被拦时，HLS 通常仍可用。
+     */
+    suspend fun fetchPlaybackInfo(itemId: String): PlaybackInfo? = withContext(Dispatchers.IO) {
+        val uid = currentUserId() ?: return@withContext null
+        val jsonBody = JSONObject().apply {
+            put("DeviceId", deviceId())
+            put("UserId", uid)
+            put("AutoOpenLiveStream", false)
+            put("IsPlayback", true)
+            put("DirectPlayProtocols", JSONArray().apply { put("Hls") })
+        }
+        val url = base + "/Items/$itemId/PlaybackInfo?api_key=$token"
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", authHeader())
+            .header("X-Emby-Authorization", authHeader())
+            .header("Content-Type", "application/json")
+            .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+        runCatching {
+            execute(request).use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful || body.isBlank()) return@use null
+                val json = JSONObject(body)
+                val psid = json.optString("PlaySessionId")
+                val msArr = json.optJSONArray("MediaSources")
+                val msid = msArr?.optJSONObject(0)?.optString("Id").orEmpty()
+                if (psid.isBlank() || msid.isBlank()) null
+                else PlaybackInfo(psid, msid)
+            }
+        }.getOrNull()
+    }
+
+    data class PlaybackInfo(val playSessionId: String, val mediaSourceId: String)
+
+    private fun deviceId(): String = "DouDouTV"
+
     private var cachedUserId: String? = null
 
     private fun currentUserId(): String? {
@@ -413,13 +453,35 @@ class EmbyClient(
 
     companion object {
         /**
-         * Emby 播放直链。
+         * Emby 播放直链（direct stream）。
          * static=true 表示不转码直接原码流传输 —— 对局域网与性能最好的选择。
-         * 若客户端解码能力不足，可改为 false 让服务器转码。
+         * 但部分反代服务器会拦 GET body 只放行 HEAD，此时需要用 HLS。
          */
         fun playbackUrl(serverUrl: String, itemId: String, token: String, static: Boolean = true): String {
             val base = serverUrl.trim().trimEnd('/')
             return "$base/Videos/$itemId/stream?static=$static&api_key=$token"
+        }
+
+        /**
+         * Emby HLS 播放地址 —— 先 POST PlaybackInfo 拿到 PlaySessionId + MediaSourceId，
+         * 再请求 master.m3u8。相比 direct stream：
+         *   · 对反代更友好（HLS manifest 和分片通常走不同后端路径）
+         *   · 自动支持多码率自适应
+         *   · 服务器开启转码 / 重封装时也能正常工作
+         */
+        fun playbackUrlHls(
+            serverUrl: String,
+            itemId: String,
+            token: String,
+            playSessionId: String,
+            mediaSourceId: String,
+            deviceId: String = "DouDouTV"
+        ): String {
+            val base = serverUrl.trim().trimEnd('/')
+            return "$base/Videos/$itemId/master.m3u8?api_key=$token" +
+                "&PlaySessionId=$playSessionId" +
+                "&MediaSourceId=$mediaSourceId" +
+                "&DeviceId=$deviceId"
         }
 
         /** 字幕轨道（外挂 srt/ass） */

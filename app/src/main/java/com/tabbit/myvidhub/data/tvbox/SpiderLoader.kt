@@ -9,6 +9,7 @@ import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipInputStream
+import android.util.Log
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -31,6 +32,10 @@ class SpiderLoader(private val context: Context) {
         .readTimeout(30, TimeUnit.SECONDS)
         .callTimeout(45, TimeUnit.SECONDS)
         .build()
+
+    companion object {
+        private const val TAG = "SpiderLoader"
+    }
 
     private val cacheDir: File = File(context.cacheDir, "spiders").also { it.mkdirs() }
     private val nativeDir: File = File(context.filesDir, "spider_libs").also { it.mkdirs() }
@@ -77,7 +82,7 @@ class SpiderLoader(private val context: Context) {
             val init = loader.loadClass("com.github.catvod.spider.Init")
             val initMethod = init.getDeclaredMethod("init", Context::class.java)
             initMethod.invoke(null, context)
-        }
+        }.onFailure { Log.e(TAG, "Init 调用失败: ${it.message}", it) }
 
         loaders[key] = loader
         key
@@ -92,13 +97,19 @@ class SpiderLoader(private val context: Context) {
 
         val clazz = runCatching { loader.loadClass(className) }.getOrNull()
             ?: runCatching { loader.loadClass(api) }.getOrNull()
-            ?: return null
+            ?: run {
+                Log.e(TAG, "找不到 Guard 类: $className (loaderKey=$loaderKey)")
+                return null
+            }
 
         val instance = runCatching {
             val ctor = clazz.getDeclaredConstructor()
             ctor.isAccessible = true
             ctor.newInstance()
-        }.getOrNull() ?: return null
+        }.getOrElse {
+            Log.e(TAG, "实例化 Guard 失败 $className: ${it.message}", it)
+            return null
+        }
 
         runCatching {
             val initM = clazz.getMethod("init", Context::class.java, String::class.java)
@@ -108,7 +119,7 @@ class SpiderLoader(private val context: Context) {
                 else -> ext.toString()
             }
             initM.invoke(instance, context, extendStr)
-        }
+        }.onFailure { Log.w(TAG, "Guard.init 调用失败（不致命）: ${it.message}") }
 
         val proxy = SpiderProxy(clazz, instance)
         instances[cacheKey] = proxy
