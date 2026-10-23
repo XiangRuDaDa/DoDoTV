@@ -132,7 +132,6 @@ fun TvSearchScreen(
                     items(results, key = { "tv_s_${it.id}" }) { item ->
                         TvPosterCard(
                             item = item,
-                            width = 180.dp,
                             onClick = { onDetail(item.id) }
                         )
                     }

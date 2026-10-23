@@ -87,7 +87,6 @@ fun TvHomeScreen(
     onSettings: () -> Unit
 ) {
     val library by vm.library.collectAsStateWithLifecycle()
-    val sources by vm.sources.collectAsStateWithLifecycle()
 
     // 优先用有横版背景图的条目做精选，不足时用海报补位
     val heroItems = remember(library) {
@@ -338,10 +337,18 @@ private fun TvPosterRow(
 }
 
 /**
- * 动态分区：根据 library 里实际存在的 kind 渲染画廊块。
- * 有 MOVIE → 电影；有 SERIES → 剧集；有 genres 含「动漫」→ 动漫。
- * 空的跳过，不写死分区标题。
+ * 动态分区：kind 基础分区 + genres 扩展分区。
+ *
+ * 1. kind 分区：MOVIE → 电影；SERIES → 剧集。
+ * 2. genre 分区：从所有条目的 genres 拆分（逗号/顿号分隔），每个 ≥2 条的 genre 一个 section。
+ *    最多展示 6 个 genre 分区，按条目数量倒序。
+ *
+ * 条目可同时出现在多个 section（主流流媒体的做法）。
  */
+private const val TV_LAZY_TAKE = 12
+private const val TV_MIN_GENRE_ITEMS = 2
+private const val TV_MAX_GENRE_SECTIONS = 6
+
 private fun LazyListScope.DynamicTvGallerySections(
     library: List<MediaEntity>,
     onMore: (kind: String?, genre: String?) -> Unit,
@@ -349,16 +356,8 @@ private fun LazyListScope.DynamicTvGallerySections(
 ) {
     if (library.isEmpty()) return
 
-    val kindLabel = { kind: String ->
-        when (kind) {
-            MediaKind.MOVIE -> "电影"
-            MediaKind.SERIES -> "剧集"
-            MediaKind.EPISODE -> "单集"
-            else -> kind
-        }
-    }
-
-    val blocks = library
+    // kind 基础分区
+    val kindBlocks = library
         .filter { it.kind.isNotBlank() && it.kind != MediaKind.EPISODE }
         .groupBy { it.kind }
         .entries
@@ -370,9 +369,30 @@ private fun LazyListScope.DynamicTvGallerySections(
             }
         }
 
-    for ((kind, items) in blocks) {
-        val title = kindLabel(kind)
+    // genre 扩展分区
+    val genreToItems = mutableMapOf<String, MutableList<MediaEntity>>()
+    val genrePattern = Regex("[,，、/\\s]+")
+    for (item in library) {
+        val parts = item.genres.split(genrePattern).map { it.trim() }.filter { it.isNotBlank() }
+        for (g in parts) genreToItems.getOrPut(g) { mutableListOf() }.add(item)
+    }
+    val kindAsGenre = setOf("电影", "剧集", "单集")
+    val genreBlocks = genreToItems.entries
+        .filter { (g, items) -> items.size >= TV_MIN_GENRE_ITEMS && g !in kindAsGenre }
+        .sortedByDescending { it.value.size }
+        .take(TV_MAX_GENRE_SECTIONS)
+
+    for ((kind, items) in kindBlocks) {
+        val title = when (kind) {
+            MediaKind.MOVIE -> "电影"
+            MediaKind.SERIES -> "剧集"
+            else -> kind
+        }
         item { TvSectionTitle(title) { TvMoreButton { onMore(kind, null) } } }
-        item { TvPosterRow(items = items.take(12), onDetail = onDetail) }
+        item { TvPosterRow(items = items.take(TV_LAZY_TAKE), onDetail = onDetail) }
+    }
+    for ((genre, items) in genreBlocks) {
+        item { TvSectionTitle(genre) { TvMoreButton { onMore(null, genre) } } }
+        item { TvPosterRow(items = items.take(TV_LAZY_TAKE), onDetail = onDetail) }
     }
 }

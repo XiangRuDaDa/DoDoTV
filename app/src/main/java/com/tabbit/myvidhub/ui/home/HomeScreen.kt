@@ -1,6 +1,5 @@
 package com.tabbit.myvidhub.ui.home
 
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -101,13 +100,11 @@ fun HomeScreen(
     }
 
     val listState = rememberLazyListState()
-    // 软件名淡出距离：轮播图高度的 ~55%，即 heroCollapseDist
+    // 软件名淡出距离：轮播图高度的 ~55%
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val heroCollapseDist = (configuration.screenWidthDp * 0.55f).toInt()
-    val rawFade = if (heroCollapseDist == 0) 0f
-        else (listState.firstVisibleItemScrollOffset.toFloat() / heroCollapseDist).coerceIn(0f, 1f)
-    // 只有左侧软件名列做 alpha 动画，右侧工具栏常驻不随滚动做任何动画 —— 这就是卡顿的根因
-    val nameAlpha by animateFloatAsState(targetValue = 1f - rawFade, label = "name_fade")
+    // 注意：alpha 计算放在 graphicsLayer 的 draw 阶段（下面 Column 里），
+    // 不在这里在 composition 层读 firstVisibleItemScrollOffset —— 那会导致每像素滚动都触发整页重组
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -186,11 +183,15 @@ fun HomeScreen(
                 .padding(start = 20.dp, end = 10.dp, top = 8.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 左侧：软件名 + 统计，滚动时淡出
+            // 左侧：软件名 + 统计，滚动时淡出（alpha 在 draw 阶段计算，不触发 composition 重组）
             Column(
                 Modifier
                     .weight(1f)
-                    .graphicsLayer { alpha = nameAlpha }
+                    .graphicsLayer {
+                        val raw = if (heroCollapseDist == 0) 0f
+                            else (listState.firstVisibleItemScrollOffset.toFloat() / heroCollapseDist).coerceIn(0f, 1f)
+                        alpha = 1f - raw
+                    }
             ) {
                 Text(
                     "DouDouTV",
@@ -226,14 +227,20 @@ fun HomeScreen(
 }
 
 /**
- * 动态分区：完全从 library 流里收集 kind 再渲染，不硬编码「电影/剧集/动漫」。
+ * 动态分区：kind 基础分区 + genres 扩展分区。
  *
- * 为什么：Emby 源可能只有 MOVIE 一种，TVBox 源可能同时有 MOVIE + SERIES + EPISODE，
- * 不同来源组合出来的分区数量不一样 —— 写死三个既空行又死板。
- * 这里先对 library 按 kind 分组，然后按 kind → 中文标题映射构建 GalleryBlock。
- * 每个分区只取前 LAZY_TAKE 条（10 条），属于懒加载策略。
+ * 1. kind 分区：MOVIE → 电影；SERIES → 剧集（只取顶层 kind，EPISODE 不独立分区）
+ * 2. genre 分区：从所有条目的 genres 里提取（按英文逗号 / 中文逗号 / 顿号分隔），
+ *    每个出现 ≥2 次的 genre 单独一个 section。Emby/TVBox 源的条目 genres 字段里
+ *    通常有「动作,科幻,剧情」这样的逗号分隔字符串，拆分后能得到 3~8 个分区，
+ *    解决之前只有 2~3 个 kind 分区太单调的问题。
+ *
+ * 条目可以同时出现在多个 section（一部科幻片既在「电影」又在「科幻」），
+ * 这是主流流媒体的做法，用户接受且有利于发现内容。
  */
 private const val LAZY_TAKE = 10
+private const val MIN_GENRE_ITEMS = 2
+private const val MAX_GENRE_SECTIONS = 6
 
 private fun LazyListScope.DynamicGallerySections(
     library: List<MediaEntity>,
@@ -243,19 +250,9 @@ private fun LazyListScope.DynamicGallerySections(
 ) {
     if (library.isEmpty()) return
 
-    // kind → 中文标题映射（Emby / TVBox 都统一用这个）
-    val kindLabel = { kind: String ->
-        when (kind) {
-            MediaKind.MOVIE -> "电影"
-            MediaKind.SERIES -> "剧集"
-            MediaKind.EPISODE -> "单集"
-            else -> kind
-        }
-    }
-
-    // 核心：不写死 MOVIE/SERIES/EPISODE —— 从 library 里拿所有出现过的 kind，每种 kind 一个分区
-    val blocks = library
-        .filter { it.kind.isNotBlank() && it.kind != MediaKind.EPISODE }  // EPISODE 是 SERIES 的子项，不单独出一个分区
+    // 1. kind 基础分区：MOVIE / SERIES / 其他
+    val kindBlocks = library
+        .filter { it.kind.isNotBlank() && it.kind != MediaKind.EPISODE }
         .groupBy { it.kind }
         .entries
         .sortedBy { (kind, _) ->
@@ -266,12 +263,44 @@ private fun LazyListScope.DynamicGallerySections(
             }
         }
 
-    for ((kind, items) in blocks) {
+    // 2. genre 扩展分区：从所有条目的 genres 拆分
+    val genreToItems = mutableMapOf<String, MutableList<MediaEntity>>()
+    val genrePattern = Regex("[,，、/\\s]+")
+    for (item in library) {
+        val parts = item.genres.split(genrePattern).map { it.trim() }.filter { it.isNotBlank() }
+        // 一部片可以同时进多个 genre（科幻 + 动作 + 冒险...）
+        for (g in parts) {
+            genreToItems.getOrPut(g) { mutableListOf() }.add(item)
+        }
+    }
+    // 过滤数量 < MIN_GENRE_ITEMS、kind 分区已覆盖的 genre（如「电影」genre 映射到 MOVIE kind），再按数量倒序取前 MAX_GENRE_SECTIONS
+    val kindAsGenre = setOf("电影", "剧集", "单集")
+    val genreBlocks = genreToItems.entries
+        .filter { (g, items) -> items.size >= MIN_GENRE_ITEMS && g !in kindAsGenre }
+        .sortedByDescending { it.value.size }
+        .take(MAX_GENRE_SECTIONS)
+
+    // 先 kind 后 genre
+    for ((kind, items) in kindBlocks) {
+        val title = when (kind) {
+            MediaKind.MOVIE -> "电影"
+            MediaKind.SERIES -> "剧集"
+            else -> kind
+        }
         GallerySection(
-            title = kindLabel(kind),
+            title = title,
             items = items.take(LAZY_TAKE),
             cardWidth = cardWidth,
             onMore = { onMore(kind, null) },
+            onOpenDetail = onOpenDetail
+        )
+    }
+    for ((genre, items) in genreBlocks) {
+        GallerySection(
+            title = genre,
+            items = items.take(LAZY_TAKE),
+            cardWidth = cardWidth,
+            onMore = { onMore(null, genre) },
             onOpenDetail = onOpenDetail
         )
     }

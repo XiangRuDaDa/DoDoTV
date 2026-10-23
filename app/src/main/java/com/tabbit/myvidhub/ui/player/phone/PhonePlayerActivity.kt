@@ -121,6 +121,7 @@ class PhonePlayerActivity : ComponentActivity() {
     private var prevEpisodeView: TextView? = null
     private var nextEpisodeView: TextView? = null
     private var episodesView: TextView? = null
+    private var playPauseView: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -242,11 +243,13 @@ class PhonePlayerActivity : ComponentActivity() {
         prevEpisodeView = view.findViewById(R.id.doudou_prev_episode)
         nextEpisodeView = view.findViewById(R.id.doudou_next_episode)
         episodesView = view.findViewById(R.id.doudou_episodes)
+        playPauseView = view.findViewById(R.id.doudou_play_pause)
 
         titleView?.text = titleState
         speedView?.text = formatSpeed(speedState)
         aspectView?.text = aspectLabel()
         orientationView?.text = orientationLabel()
+        updatePlayPauseLabel()
 
         view.findViewById<View>(R.id.doudou_back).setOnClickListener { finish() }
         speedView?.setOnClickListener { cycleSpeed() }
@@ -264,27 +267,36 @@ class PhonePlayerActivity : ComponentActivity() {
             if (episodeList.isNotEmpty()) showEpisodeDialog = true
         }
 
-        // 快退 10 秒 / 快进 30 秒（覆盖 Media3 默认的 5 秒）
-        view.findViewById<View>(androidx.media3.ui.R.id.exo_rew)?.setOnClickListener {
-            seekBy(-10_000L)
+        // 底部栏首位：播放暂停 / 快退 / 快进
+        playPauseView?.setOnClickListener {
+            val p = player ?: return@setOnClickListener
+            if (p.isPlaying) p.pause() else p.play()
+            updatePlayPauseLabel()
         }
-        view.findViewById<View>(androidx.media3.ui.R.id.exo_ffwd)?.setOnClickListener {
-            seekBy(30_000L)
-        }
+        view.findViewById<View>(R.id.doudou_rew).setOnClickListener { seekBy(-10_000L) }
+        view.findViewById<View>(R.id.doudou_ffwd).setOnClickListener { seekBy(10_000L) }
 
         // 遥控器：控制条显示后不要过快自动隐藏，方便选择上下集
         view.controllerShowTimeoutMs = 5_000
         updateEpisodeButtons()
     }
 
-    /** 左右滑动快进/快退：方向以手指水平位移为准 */
+    /** 更新底部播放暂停按钮文字 */
+    private fun updatePlayPauseLabel() {
+        val p = player ?: return
+        playPauseView?.text = if (p.isPlaying) "暂停" else "播放"
+    }
+
+    /** 左右滑动快进/快退 + 双击暂停 */
     private fun setupTouchSeek(view: PlayerView) {
         val slop = ViewConfiguration.get(this).scaledTouchSlop
+        val doubleTapMs = ViewConfiguration.getDoubleTapTimeout()
         var downX = 0f
         var downY = 0f
         var startPos = 0L
         var targetPos = 0L
         var seeking = false
+        var lastTapMs = 0L
 
         view.setOnTouchListener { v, event ->
             val p = player ?: return@setOnTouchListener false
@@ -295,6 +307,15 @@ class PhonePlayerActivity : ComponentActivity() {
                     startPos = p.currentPosition
                     targetPos = startPos
                     seeking = false
+                    // 双击暂停：两次 ACTION_DOWN 间隔 < doubleTapTimeout → 切换播放状态
+                    val now = System.currentTimeMillis()
+                    if (now - lastTapMs < doubleTapMs) {
+                        if (p.isPlaying) p.pause() else p.play()
+                        updatePlayPauseLabel()
+                        lastTapMs = 0L  // 重置避免三连击触发两次
+                    } else {
+                        lastTapMs = now
+                    }
                     false
                 }
 
@@ -374,6 +395,10 @@ class PhonePlayerActivity : ComponentActivity() {
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) playNext()
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                updatePlayPauseLabel()
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -642,8 +667,6 @@ class PhonePlayerActivity : ComponentActivity() {
         playerView?.player = null
         player?.release()
         player = null
-        // 播放器关闭时释放 Media3 SimpleCache，避免磁盘占用越来越大
-        PlayerFactory.releaseCache()
         super.onDestroy()
     }
 

@@ -169,7 +169,6 @@ fun TvGenreScreen(
                 items(items, key = { "tv_g_${it.id}" }) { item ->
                     TvPosterCard(
                         item = item,
-                        width = 180.dp,
                         onClick = { onDetail(item.id) }
                     )
                 }
