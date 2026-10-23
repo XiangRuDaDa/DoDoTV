@@ -31,10 +31,14 @@ import java.io.File
  *   3. minBufferMs 20s/30s → 30s/45s：网络抖动时靠本地缓冲兜住；
  *   4. maxBufferMs 与 targetBufferBytes 同步放大，防止缓冲到顶后主动停止预读。
  *
- * 磁盘缓存从 1GB 提到 4GB：连续剧来回拖拽、重看同一集时几乎不再走网络。
+ * 磁盘缓存默认 LRU 自动淘汰，但如果用户长时间不用、缓存越积越多，
+ * 可以通过设置页手动清空。关闭单个播放器时也会调用 clearCacheFor(context) 清一次。
  */
 @UnstableApi
 object PlayerFactory {
+
+    /** 缓存目录名称 */
+    private const val CACHE_DIR_NAME = "media_cache"
 
     /** 磁盘缓存期望上限：手机 1GB */
     private const val CACHE_PREFERRED_PHONE = 1L * 1024 * 1024 * 1024
@@ -52,14 +56,7 @@ object PlayerFactory {
     @Volatile
     private var cache: SimpleCache? = null
 
-    /**
-     * 计算磁盘缓存上限。
-     *
-     * 缓存放在 cacheDir 里，系统在存储紧张时会直接清空，所以不是越大越好：
-     * 1. 先按设备类型取期望值（手机 1GB / 电视 2GB）；
-     * 2. 再按当前剩余空间收缩到 1/4，避免把用户存储塞满导致安装、拍照、系统更新失败；
-     * 3. 最低保底 96MB，否则连一集都存不下。
-     */
+    /** 计算磁盘缓存上限 */
     private fun cacheLimitFor(context: Context, isTv: Boolean): Long {
         val preferred = if (isTv) CACHE_PREFERRED_TV else CACHE_PREFERRED_PHONE
         val free = runCatching {
@@ -71,9 +68,8 @@ object PlayerFactory {
     private fun cacheInstance(context: Context, isTv: Boolean): SimpleCache =
         cache ?: synchronized(this) {
             cache ?: run {
-                // LRU 淘汰器容量在构造时固定，因此只在首次创建时按当时剩余空间决策
                 SimpleCache(
-                    File(context.cacheDir, "media_cache"),
+                    File(context.cacheDir, CACHE_DIR_NAME),
                     LeastRecentlyUsedCacheEvictor(cacheLimitFor(context, isTv)),
                     StandaloneDatabaseProvider(context)
                 ).also { cache = it }
@@ -89,8 +85,6 @@ object PlayerFactory {
     private fun build(context: Context, isTv: Boolean): ExoPlayer {
         val http = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
-            // 超时不能给太长：跨境链路常见的表现是「连上了但不发数据」，
-            // 早点失败交给重试策略重新握手，比死等 20 秒更快出画面。
             .setConnectTimeoutMs(if (isTv) 12_000 else 8_000)
             .setReadTimeoutMs(if (isTv) 18_000 else 12_000)
             .setUserAgent(if (isTv) "DouDouTV/3.0 (AndroidTV)" else "DouDouTV/3.0 (Android)")
@@ -98,26 +92,21 @@ object PlayerFactory {
         val cached = CacheDataSource.Factory()
             .setCache(cacheInstance(context, isTv))
             .setUpstreamDataSourceFactory(http)
-            // 缓存写坏时立刻回源，不让坏块把整次播放拖死
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                if (isTv) 45_000 else 30_000,   // 最小缓冲：网络抖动时靠它兜住
-                if (isTv) 240_000 else 180_000, // 最大缓冲
-                BUFFER_FOR_PLAYBACK_MS,         // 起播门槛：由 1s 提到 5s，消灭「播一下就转圈」
-                BUFFER_AFTER_REBUFFER_MS        // 卡顿后重缓冲门槛
+                if (isTv) 45_000 else 30_000,
+                if (isTv) 240_000 else 180_000,
+                BUFFER_FOR_PLAYBACK_MS,
+                BUFFER_AFTER_REBUFFER_MS
             )
             .setTargetBufferBytes(if (isTv) 192 * 1024 * 1024 else 128 * 1024 * 1024)
-            // 优先保证时长而不是内存占用：宁可多占一点内存，也别因为到顶而停止预读
             .setPrioritizeTimeOverSizeThresholds(true)
-            // 回退缓冲：回拖进度条时不重新走网络
             .setBackBuffer(60_000, true)
             .build()
 
-        // 默认只重试 3 次且退避很快，弱网下经常来不及恢复
         val errorPolicy = DefaultLoadErrorHandlingPolicy(8)
-
         val mediaSourceFactory = DefaultMediaSourceFactory(cached)
             .setLoadErrorHandlingPolicy(errorPolicy)
 
@@ -130,11 +119,51 @@ object PlayerFactory {
             .build()
     }
 
-    /** 退出应用时释放磁盘缓存（SimpleCache 同一时刻只能被一个实例持有） */
+    /** 读取缓存目录当前占用（字节数），设置页展示用 */
+    fun cacheSizeBytes(context: Context): Long {
+        val dir = File(context.cacheDir, CACHE_DIR_NAME)
+        if (!dir.exists()) return 0L
+        fun walk(f: File): Long {
+            return if (f.isFile) f.length()
+            else f.listFiles()?.sumOf { walk(it) } ?: 0L
+        }
+        return walk(dir)
+    }
+
+    /** 清理磁盘缓存。SimpleCache 必须 release 后才能删目录，否则会被锁。 */
+    fun clearCache(context: Context) {
+        synchronized(this) {
+            runCatching { cache?.release() }
+            cache = null
+        }
+        runCatching {
+            val dir = File(context.cacheDir, CACHE_DIR_NAME)
+            if (dir.exists()) {
+                // 先删 SimpleCache 自己的 db 文件，确保下次创建不冲突
+                dir.listFiles()?.forEach { it.deleteRecursively() }
+                dir.delete()
+            }
+        }
+    }
+
+    /** 释放当前 SimpleCache 实例（退出应用 / 播放器 Activity onDestroy 时调用） */
     fun releaseCache() {
         synchronized(this) {
-            cache?.release()
+            runCatching { cache?.release() }
             cache = null
+        }
+    }
+
+    /** 字节数格式化，展示友好 */
+    fun formatBytes(bytes: Long): String {
+        if (bytes <= 0) return "0 KB"
+        val kb = 1024.0
+        val mb = kb * 1024
+        val gb = mb * 1024
+        return when {
+            bytes >= gb -> "%.1f GB".format(bytes / gb)
+            bytes >= mb -> "%.1f MB".format(bytes / mb)
+            else -> "%.0f KB".format(bytes / kb)
         }
     }
 }

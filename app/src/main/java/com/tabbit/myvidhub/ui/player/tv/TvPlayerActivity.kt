@@ -306,6 +306,7 @@ class TvPlayerActivity : ComponentActivity() {
         saveProgress(force = true)
         player?.release()
         player = null
+        PlayerFactory.releaseCache()
         super.onDestroy()
     }
 

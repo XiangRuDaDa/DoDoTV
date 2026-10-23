@@ -367,6 +367,9 @@ class PhonePlayerActivity : ComponentActivity() {
         val p = PlayerFactory.createPhonePlayer(this)
         player = p
         playerView?.player = p
+        // 进入页面直接播放，不展示控制条 —— 用户触摸/按键时 Media3 会自动 showController
+        playerView?.controllerAutoShow = false
+        playerView?.hideController()
 
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
@@ -639,6 +642,8 @@ class PhonePlayerActivity : ComponentActivity() {
         playerView?.player = null
         player?.release()
         player = null
+        // 播放器关闭时释放 Media3 SimpleCache，避免磁盘占用越来越大
+        PlayerFactory.releaseCache()
         super.onDestroy()
     }
 

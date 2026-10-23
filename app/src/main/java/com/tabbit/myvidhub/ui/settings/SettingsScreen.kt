@@ -30,11 +30,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tabbit.myvidhub.data.scrape.ScrapeStrategy
 import com.tabbit.myvidhub.core.Prefs
+import com.tabbit.myvidhub.player.PlayerFactory
 import com.tabbit.myvidhub.ui.components.TmdbDisclaimer
 import com.tabbit.myvidhub.ui.LibraryViewModel
 import com.tabbit.myvidhub.ui.theme.AppColors
@@ -283,6 +285,40 @@ fun SettingsScreen(vm: LibraryViewModel) {
                     }
                 }
             }
+        }
+
+        // ---------- 缓存 ----------
+        SettingCard(title = "播放缓存") {
+            var cacheBytes by remember { mutableStateOf(0L) }
+            LaunchedEffect(Unit) {
+                cacheBytes = PlayerFactory.cacheSizeBytes(ctx)
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "当前占用：${PlayerFactory.formatBytes(cacheBytes)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = AppColors.TextPrimary
+                )
+                Button(
+                    onClick = {
+                        PlayerFactory.clearCache(ctx)
+                        cacheBytes = PlayerFactory.cacheSizeBytes(ctx)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AppColors.Brand,
+                        contentColor = Color.White
+                    )
+                ) { Text("清除缓存") }
+            }
+            Text(
+                "视频播放产生的临时缓存，关闭播放器时会自动清理。也可以手动清除释放存储。",
+                style = MaterialTheme.typography.labelSmall,
+                color = AppColors.TextTertiary
+            )
         }
 
         // ---------- 关于（精简） ----------

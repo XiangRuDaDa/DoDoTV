@@ -158,45 +158,39 @@ fun TvHomeScreen(
             )
         }
 
-        // ---------- 透明悬浮顶部入口条（压在主视觉之上，滚动淡出） ----------
+        // ---------- 透明悬浮顶部入口条（压在主视觉之上，滚动淡出；只显示操作按钮，不显示软件名） ----------
         TvTopBar(
-            count = library.size,
-            sourceCount = sources.size,
-            scanning = vm.scanning,
             alpha = topBarAlpha,
+            scanning = vm.scanning,
             firstFocusRequester = topBarFirstFocus,
             onSearch = onSearch,
             onSources = onSources,
             onSettings = onSettings,
             onRefresh = { vm.scanAll() },
-            // 拦截 KEYCODE_DPAD_DOWN → 把焦点交给 TvHero 播放按钮
             onDpadDownToHero = { heroPlayFocus.requestFocus() }
         )
     }
 }
 
-/** 顶部入口条：左边品牌与统计，右边可聚焦的操作按钮。滚动时淡出，顶栏按钮按下键交给主视觉。 */
+/** 顶部入口条：只有操作按钮（同步/搜索/来源/设置）。TV 端不展示软件名称。 */
 @Composable
 private fun TvTopBar(
-    count: Int,
-    sourceCount: Int,
-    scanning: Boolean,
     alpha: Float,
     firstFocusRequester: FocusRequester,
     onSearch: () -> Unit,
     onSources: () -> Unit,
     onSettings: () -> Unit,
     onRefresh: () -> Unit,
+    scanning: Boolean = false,
     onDpadDownToHero: () -> Unit
 ) {
-    val enabled = alpha > 0.1f  // 顶栏淡出后不再可聚焦，避免焦点卡住
+    val enabled = alpha > 0.1f
 
     Row(
         Modifier
             .focusable(enabled = enabled)
             .fillMaxWidth()
             .graphicsLayer { this.alpha = alpha }
-            // 顶栏按钮按下键时，手动把焦点交给下方主视觉的播放按钮
             .onPreviewKeyEvent { event ->
                 if (enabled && event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
                     (event.nativeKeyEvent?.keyCode ?: 0) == KeyEvent.KEYCODE_DPAD_DOWN) {
@@ -205,21 +199,9 @@ private fun TvTopBar(
                 } else false
             }
             .padding(start = 44.dp, end = 44.dp, top = 26.dp),
+        horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                "DouDouTV",
-                color = Color.White,
-                style = MaterialTheme.typography.displaySmall,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                if (scanning) "同步中…" else "$count 个条目 · $sourceCount 个来源",
-                color = Color.White.copy(alpha = 0.72f),
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
         if (scanning) {
             CircularProgressIndicator(color = AppColors.Brand, strokeWidth = 2.dp)
             Spacer(Modifier.width(18.dp))
@@ -227,7 +209,6 @@ private fun TvTopBar(
             TvPillButton("同步", primary = false, onClick = onRefresh)
             Spacer(Modifier.width(12.dp))
         }
-        // 第一个按钮（搜索）挂上 focusRequester，让 Dpad Up 能回到顶栏
         TvPillButton(
             "搜索", primary = false, onClick = onSearch,
             modifier = Modifier.focusRequester(firstFocusRequester)
@@ -368,26 +349,30 @@ private fun LazyListScope.DynamicTvGallerySections(
 ) {
     if (library.isEmpty()) return
 
-    val animeKeywords = listOf("动漫", "动画", "anime")
-    val movies = library.filter { it.kind == MediaKind.MOVIE }.take(12)
-    val series = library.filter { it.kind == MediaKind.SERIES }.take(12)
-    val anime = library.filter {
-        (it.kind == MediaKind.SERIES || it.kind == MediaKind.MOVIE) &&
-            animeKeywords.any { kw -> it.genres.lowercase().contains(kw.lowercase()) }
-    }.take(12)
+    val kindLabel = { kind: String ->
+        when (kind) {
+            MediaKind.MOVIE -> "电影"
+            MediaKind.SERIES -> "剧集"
+            MediaKind.EPISODE -> "单集"
+            else -> kind
+        }
+    }
 
-    data class Block(val title: String, val kind: String?, val genre: String?, val items: List<MediaEntity>)
-    val blocks = mutableListOf<Block>()
-    if (movies.isNotEmpty()) blocks += Block("电影", MediaKind.MOVIE, null, movies)
-    if (series.isNotEmpty()) blocks += Block("剧集", MediaKind.SERIES, null, series)
-    if (anime.isNotEmpty()) blocks += Block("动漫", null, "动漫", anime)
-
-    for (b in blocks) {
-        item {
-            TvSectionTitle(b.title) {
-                TvMoreButton { onMore(b.kind, b.genre) }
+    val blocks = library
+        .filter { it.kind.isNotBlank() && it.kind != MediaKind.EPISODE }
+        .groupBy { it.kind }
+        .entries
+        .sortedBy { (kind, _) ->
+            when (kind) {
+                MediaKind.MOVIE -> 0
+                MediaKind.SERIES -> 1
+                else -> 2
             }
         }
-        item { TvPosterRow(items = b.items, onDetail = onDetail) }
+
+    for ((kind, items) in blocks) {
+        val title = kindLabel(kind)
+        item { TvSectionTitle(title) { TvMoreButton { onMore(kind, null) } } }
+        item { TvPosterRow(items = items.take(12), onDetail = onDetail) }
     }
 }

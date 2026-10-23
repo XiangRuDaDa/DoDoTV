@@ -101,12 +101,13 @@ fun HomeScreen(
     }
 
     val listState = rememberLazyListState()
-    // 轮播图高度大概是屏幕宽度的 0.55 倍（HeroBanner 的 aspectRatio 是 16:9）
+    // 软件名淡出距离：轮播图高度的 ~55%，即 heroCollapseDist
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-    val heroCollapseDist = configuration.screenWidthDp.dp * 0.55f
-    // 顶栏透明度：下滑到 heroCollapseDist 后完全淡出
-    val rawFade = (listState.firstVisibleItemScrollOffset / heroCollapseDist.value).coerceIn(0f, 1f)
-    val fadeAlpha by animateFloatAsState(targetValue = 1f - rawFade, label = "topbar_fade")
+    val heroCollapseDist = (configuration.screenWidthDp * 0.55f).toInt()
+    val rawFade = if (heroCollapseDist == 0) 0f
+        else (listState.firstVisibleItemScrollOffset.toFloat() / heroCollapseDist).coerceIn(0f, 1f)
+    // 只有左侧软件名列做 alpha 动画，右侧工具栏常驻不随滚动做任何动画 —— 这就是卡顿的根因
+    val nameAlpha by animateFloatAsState(targetValue = 1f - rawFade, label = "name_fade")
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -168,7 +169,7 @@ fun HomeScreen(
                 }
             }
 
-            // ---------- 动态分区：根据库内实际存在的 kind 渲染 ----------
+            // ---------- 动态分区：根据库内实际存在的 kind / genre 渲染 ----------
             DynamicGallerySections(
                 library = library,
                 cardWidth = cardWidth,
@@ -177,16 +178,20 @@ fun HomeScreen(
             )
         }
 
-        // ---------- 透明悬浮顶栏（压在轮播图之上，滚动时淡入淡出） ----------
+        // ---------- 透明悬浮顶栏（拆成两段：左=软件名单独淡出；右=工具栏常驻无动画） ----------
         Row(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .fillMaxWidth()
-                .graphicsLayer { alpha = fadeAlpha }
                 .padding(start = 20.dp, end = 10.dp, top = 8.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(Modifier.weight(1f)) {
+            // 左侧：软件名 + 统计，滚动时淡出
+            Column(
+                Modifier
+                    .weight(1f)
+                    .graphicsLayer { alpha = nameAlpha }
+            ) {
                 Text(
                     "DouDouTV",
                     style = MaterialTheme.typography.headlineMedium,
@@ -201,6 +206,7 @@ fun HomeScreen(
                     color = Color.White.copy(alpha = 0.72f)
                 )
             }
+            // 右侧：搜索/刷新工具栏，常驻不淡出
             IconButton(onClick = onOpenSearch) {
                 Icon(Icons.Filled.Search, contentDescription = "搜索", tint = Color.White)
             }
@@ -220,12 +226,15 @@ fun HomeScreen(
 }
 
 /**
- * 动态分区：根据 library 里实际存在的 kind 渲染画廊块。
+ * 动态分区：完全从 library 流里收集 kind 再渲染，不硬编码「电影/剧集/动漫」。
  *
- * 不写死「电影/剧集/动漫」三行——Emby 源可能只有电影、TVBox 源可能有更多类型，
- * 有什么渲染什么，空的跳过。优先级：MOVIE → SERIES → (其他 kind)
- * 动漫的判定：kind=EPISODE 且 genres 里含「动漫」，或者 genres 里含「动漫」的直接列。
+ * 为什么：Emby 源可能只有 MOVIE 一种，TVBox 源可能同时有 MOVIE + SERIES + EPISODE，
+ * 不同来源组合出来的分区数量不一样 —— 写死三个既空行又死板。
+ * 这里先对 library 按 kind 分组，然后按 kind → 中文标题映射构建 GalleryBlock。
+ * 每个分区只取前 LAZY_TAKE 条（10 条），属于懒加载策略。
  */
+private const val LAZY_TAKE = 10
+
 private fun LazyListScope.DynamicGallerySections(
     library: List<MediaEntity>,
     cardWidth: Dp,
@@ -234,30 +243,35 @@ private fun LazyListScope.DynamicGallerySections(
 ) {
     if (library.isEmpty()) return
 
-    data class GalleryBlock(val title: String, val kind: String?, val genre: String?, val items: List<MediaEntity>)
+    // kind → 中文标题映射（Emby / TVBox 都统一用这个）
+    val kindLabel = { kind: String ->
+        when (kind) {
+            MediaKind.MOVIE -> "电影"
+            MediaKind.SERIES -> "剧集"
+            MediaKind.EPISODE -> "单集"
+            else -> kind
+        }
+    }
 
-    // 电影：kind=MOVIE，取最新 10
-    val movies = library.filter { it.kind == MediaKind.MOVIE }.take(10)
-    // 剧集：kind=SERIES（排除 EPISODE），取最新 10
-    val series = library.filter { it.kind == MediaKind.SERIES }.take(10)
-    // 动漫：genres 含「动漫/动画/anime」，取最新 10
-    val animeKeywords = listOf("动漫", "动画", "anime")
-    val anime = library.filter {
-        (it.kind == MediaKind.SERIES || it.kind == MediaKind.MOVIE) &&
-            animeKeywords.any { kw -> it.genres.contains(kw, ignoreCase = true) }
-    }.take(10)
+    // 核心：不写死 MOVIE/SERIES/EPISODE —— 从 library 里拿所有出现过的 kind，每种 kind 一个分区
+    val blocks = library
+        .filter { it.kind.isNotBlank() && it.kind != MediaKind.EPISODE }  // EPISODE 是 SERIES 的子项，不单独出一个分区
+        .groupBy { it.kind }
+        .entries
+        .sortedBy { (kind, _) ->
+            when (kind) {
+                MediaKind.MOVIE -> 0
+                MediaKind.SERIES -> 1
+                else -> 2
+            }
+        }
 
-    val blocks = mutableListOf<GalleryBlock>()
-    if (movies.isNotEmpty()) blocks += GalleryBlock("电影", MediaKind.MOVIE, null, movies)
-    if (series.isNotEmpty()) blocks += GalleryBlock("剧集", MediaKind.SERIES, null, series)
-    if (anime.isNotEmpty()) blocks += GalleryBlock("动漫", null, "动漫", anime)
-
-    for (b in blocks) {
+    for ((kind, items) in blocks) {
         GallerySection(
-            title = b.title,
-            items = b.items,
+            title = kindLabel(kind),
+            items = items.take(LAZY_TAKE),
             cardWidth = cardWidth,
-            onMore = { onMore(b.kind, b.genre) },
+            onMore = { onMore(kind, null) },
             onOpenDetail = onOpenDetail
         )
     }
