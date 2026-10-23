@@ -106,7 +106,8 @@ class PhonePlayerActivity : ComponentActivity() {
     private var subtitleBgAlpha by mutableStateOf(DEFAULT_SUBTITLE_BG_ALPHA)
     private var subtitleTextSize by mutableStateOf(DEFAULT_SUBTITLE_TEXT_SIZE)
 
-    private var showTrackDialog by mutableStateOf(false)
+    private var showAudioDialog by mutableStateOf(false)
+    private var showSubtitleDialog by mutableStateOf(false)
     private var showSubtitleStyleDialog by mutableStateOf(false)
     private var showEpisodeDialog by mutableStateOf(false)
 
@@ -125,6 +126,8 @@ class PhonePlayerActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // 手机端默认进入横屏全屏，不用等用户点按钮
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         enterImmersive()
 
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -160,16 +163,22 @@ class PhonePlayerActivity : ComponentActivity() {
                     }
                 )
 
-                if (showTrackDialog) {
-                    TrackDialog(
-                        tracks = loadTracks(),
-                        onDismiss = { showTrackDialog = false },
-                        onSelect = {
-                            selectTrack(it)
-                            showTrackDialog = false
-                        },
+                if (showAudioDialog) {
+                    AudioDialog(
+                        tracks = loadAudioTracks(),
+                        onDismiss = { showAudioDialog = false },
+                        onSelect = { selectAudio(it); showAudioDialog = false }
+                    )
+                }
+
+                if (showSubtitleDialog) {
+                    SubtitleDialog(
+                        tracks = loadSubtitleTracks(),
+                        styleLabel = subtitleStyleLabel(),
+                        onDismiss = { showSubtitleDialog = false },
+                        onSelect = { selectSubtitle(it); showSubtitleDialog = false },
                         onStyle = {
-                            showTrackDialog = false
+                            showSubtitleDialog = false
                             showSubtitleStyleDialog = true
                         }
                     )
@@ -243,8 +252,11 @@ class PhonePlayerActivity : ComponentActivity() {
         speedView?.setOnClickListener { cycleSpeed() }
         aspectView?.setOnClickListener { cycleAspect() }
         orientationView?.setOnClickListener { toggleOrientation() }
-        view.findViewById<View>(R.id.doudou_tracks).setOnClickListener {
-            showTrackDialog = true
+        view.findViewById<View>(R.id.doudou_audio).setOnClickListener {
+            showAudioDialog = true
+        }
+        view.findViewById<View>(R.id.doudou_subtitle).setOnClickListener {
+            showSubtitleDialog = true
         }
         prevEpisodeView?.setOnClickListener { playPrevious() }
         nextEpisodeView?.setOnClickListener { playNext() }
@@ -502,50 +514,91 @@ class PhonePlayerActivity : ComponentActivity() {
         orientationView?.text = orientationLabel()
     }
 
-    // ---------- 轨道选择 ----------
+    // ---------- 轨道选择（音轨 / 字幕 独立处理，避免互相覆盖导致报错） ----------
+    //
+    // 根因：原来的实现把音轨和字幕混在同一个 loadTracks 列表里，
+    // selectTrack 时用 builder.setOverrideForType 同时改 audio 和 text 的参数，
+    // 但 TrackOption 里存的 group 是 loadTracks 当时的快照，播放器在 seek / 网络抖动后
+    // currentTracks.groups 会变，旧 group.mediaTrackGroup 传给 TrackSelectionOverride
+    // 会被 Media3 判为"不在当前轨道列表"，直接抛 PlaybackException → 视频报错停止。
+    //
+    // 修复：1. 音轨 / 字幕 分开加载、分开选择；
+    //      2. 每次 select 时重新从 player.currentTracks.groups 找当前最新的 group 引用。
 
-    private fun loadTracks(): List<TrackOption> {
+    private fun loadAudioTracks(): List<TrackOption> {
         val p = player ?: return emptyList()
         val out = mutableListOf<TrackOption>()
-        val textDisabled = p.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)
-
         for (group in p.currentTracks.groups) {
-            val type = group.type
-            if (type != C.TRACK_TYPE_AUDIO && type != C.TRACK_TYPE_TEXT) continue
+            if (group.type != C.TRACK_TYPE_AUDIO) continue
             for (i in 0 until group.length) {
                 val format = group.getTrackFormat(i)
-                if (type == C.TRACK_TYPE_AUDIO && format.sampleMimeType == null) continue
+                if (format.sampleMimeType == null) continue
                 val label = buildString {
-                    when (type) {
-                        C.TRACK_TYPE_AUDIO -> {
-                            append(format.label ?: format.language ?: "音轨")
-                            format.channelCount.takeIf { it > 0 }?.let { append(" · ${it}声道") }
-                        }
-                        else -> append(format.label ?: format.language ?: "字幕")
-                    }
+                    append(format.label ?: format.language ?: "音轨")
+                    format.channelCount.takeIf { it > 0 }?.let { append(" · ${it}声道") }
+                    format.bitrate.takeIf { it > 0 }?.let { append(" · ${it / 1000}kbps") }
                 }
-                out += TrackOption(label, type, group, i, group.isTrackSelected(i))
+                out += TrackOption(label, C.TRACK_TYPE_AUDIO, group, i, group.isTrackSelected(i))
             }
         }
-        return out + TrackOption(
-            "关闭字幕", C.TRACK_TYPE_TEXT,
-            p.currentTracks.groups.firstOrNull() ?: return out,
-            -1, textDisabled
-        )
+        return out
     }
 
-    private fun selectTrack(option: TrackOption) {
+    private fun loadSubtitleTracks(): List<TrackOption> {
+        val p = player ?: return emptyList()
+        val disabled = p.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)
+        val out = mutableListOf<TrackOption>()
+        for (group in p.currentTracks.groups) {
+            if (group.type != C.TRACK_TYPE_TEXT) continue
+            for (i in 0 until group.length) {
+                val format = group.getTrackFormat(i)
+                val label = format.label ?: format.language ?: "字幕"
+                out += TrackOption(label, C.TRACK_TYPE_TEXT, group, i,
+                    !disabled && group.isTrackSelected(i))
+            }
+        }
+        val firstGroup = p.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_TEXT }
+        out += TrackOption("关闭字幕", C.TRACK_TYPE_TEXT,
+            firstGroup ?: return out, -1, disabled)
+        return out
+    }
+
+    private fun selectAudio(option: TrackOption) {
+        val p = player ?: return
+        // 关键：每次从当前 currentTracks 里找最新的 group，不用 Dialog 里快照的旧 group
+        val targetMediaGroup = option.group.mediaTrackGroup
+        val freshGroup = p.currentTracks.groups.firstOrNull { it.mediaTrackGroup === targetMediaGroup }
+            ?: return
+        val builder = p.trackSelectionParameters.buildUpon()
+        builder.setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+        builder.setOverrideForType(
+            TrackSelectionOverride(freshGroup.mediaTrackGroup, option.trackIndex)
+        )
+        p.trackSelectionParameters = builder.build()
+    }
+
+    private fun selectSubtitle(option: TrackOption) {
         val p = player ?: return
         val builder = p.trackSelectionParameters.buildUpon()
-        if (option.type == C.TRACK_TYPE_TEXT && option.trackIndex < 0) {
+        if (option.trackIndex < 0) {
+            // Media3 单参数 API：setTrackTypeDisabled 后 Media3 自动忽略该 type 的所有 override，
+            // 因此不需要额外调用 clearOverrideForType（这个方法在当前版本也不存在）
             builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
         } else {
-            builder.setTrackTypeDisabled(option.type, false)
+            builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            val targetMediaGroup = option.group.mediaTrackGroup
+            val freshGroup = p.currentTracks.groups.firstOrNull { it.mediaTrackGroup === targetMediaGroup }
+                ?: return
             builder.setOverrideForType(
-                TrackSelectionOverride(option.group.mediaTrackGroup, option.trackIndex)
+                TrackSelectionOverride(freshGroup.mediaTrackGroup, option.trackIndex)
             )
         }
         p.trackSelectionParameters = builder.build()
+    }
+
+    private fun subtitleStyleLabel(): String {
+        val bg = (subtitleBgAlpha * 100).toInt()
+        return "背景 ${bg}% · ${subtitleTextSize.toInt()}sp"
     }
 
     private fun saveProgress(force: Boolean = false) {
@@ -637,6 +690,7 @@ private fun fmtTime(ms: Long): String {
 private data class TrackOption(
     val label: String,
     val type: Int,
+    /** 当前快照 group（select 时只用来取出 mediaTrackGroup 做引用比对） */
     val group: Tracks.Group,
     val trackIndex: Int,
     val selected: Boolean
@@ -696,36 +750,48 @@ private fun PlayerScreen(
 }
 
 @Composable
-private fun TrackDialog(
+private fun AudioDialog(
     tracks: List<TrackOption>,
+    onDismiss: () -> Unit,
+    onSelect: (TrackOption) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
+        containerColor = AppColors.Surface,
+        title = { Text("音轨", color = AppColors.TextPrimary) },
+        text = {
+            if (tracks.isEmpty()) {
+                Text("未检测到多音轨", color = AppColors.TextSecondary)
+            } else {
+                LazyColumn(Modifier.heightIn(max = 400.dp)) {
+                    items(tracks) { TrackRow(it) { onSelect(it) } }
+                }
+            }
+        }
+    )
+}
+
+@Composable
+private fun SubtitleDialog(
+    tracks: List<TrackOption>,
+    styleLabel: String,
     onDismiss: () -> Unit,
     onSelect: (TrackOption) -> Unit,
     onStyle: () -> Unit
 ) {
-    val audio = tracks.filter { it.type == C.TRACK_TYPE_AUDIO }
-    val text = tracks.filter { it.type == C.TRACK_TYPE_TEXT }
-
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
-        dismissButton = {
-            TextButton(onClick = onStyle) { Text("字幕外观") }
-        },
+        dismissButton = { TextButton(onClick = onStyle) { Text("外观 · $styleLabel") } },
         containerColor = AppColors.Surface,
-        title = { Text("音轨与字幕", color = AppColors.TextPrimary) },
+        title = { Text("字幕", color = AppColors.TextPrimary) },
         text = {
-            Column {
-                if (audio.isNotEmpty()) {
-                    Text("音轨", color = AppColors.Brand, style = MaterialTheme.typography.titleSmall)
-                    audio.forEach { TrackRow(it) { onSelect(it) } }
-                }
-                if (text.isNotEmpty()) {
-                    Text("字幕", color = AppColors.Brand, style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier.padding(top = 8.dp))
-                    text.forEach { TrackRow(it) { onSelect(it) } }
-                }
-                if (tracks.isEmpty()) {
-                    Text("未检测到可选轨道", color = AppColors.TextSecondary)
+            if (tracks.isEmpty()) {
+                Text("未检测到可选字幕", color = AppColors.TextSecondary)
+            } else {
+                LazyColumn(Modifier.heightIn(max = 400.dp)) {
+                    items(tracks) { TrackRow(it) { onSelect(it) } }
                 }
             }
         }

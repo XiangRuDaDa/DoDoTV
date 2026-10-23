@@ -188,7 +188,12 @@
                     android:text="1.0x" />
 
                 <TextView
-                    android:id="@+id/doudou_tracks"
+                    android:id="@+id/doudou_audio"
+                    style="@style/PlayerPill"
+                    android:text="音轨" />
+
+                <TextView
+                    android:id="@+id/doudou_subtitle"
                     style="@style/PlayerPill"
                     android:text="字幕" />
 

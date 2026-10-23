@@ -121,25 +121,6 @@ fun PosterCard(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                if (item.rating > 0) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Star,
-                            contentDescription = null,
-                            tint = AppColors.Rating,
-                            modifier = Modifier.size(11.dp)
-                        )
-                        Text(
-                            text = "%.1f".format(item.rating),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White.copy(alpha = 0.9f)
-                        )
-                    }
-                }
-
                 if (showProgress && item.positionMs > 0 && item.durationMs > 0) {
                     ProgressLine(item.positionMs.toFloat() / item.durationMs.toFloat())
                 }

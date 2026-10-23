@@ -1,5 +1,6 @@
 package com.tabbit.myvidhub.ui.home
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,8 +17,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -45,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -63,11 +67,14 @@ import kotlinx.coroutines.launch
 
 /**
  * 首页（VidHub 形态）：
- *   精选大图轮播 → 继续观看 → 收藏 → 电影 → 剧集 → 动漫
+ *   精选大图轮播 → 继续观看 → 收藏 → [动态分区]
  *
  * 懒加载策略：每个分类只展示最新 10 条（横向滑动画廊，条数由 ViewModel 控制），
  * 点「更多」进入分类浏览页再按类型/题材分页加载整库，
  * 避免一次性把几百上千个条目全部刷进首页。
+ *
+ * 顶栏（软件名/刷新/搜索）悬浮在轮播图之上，下滑时平滑淡出，
+ * 顶到轮播图顶部时再淡入。
  */
 @Composable
 fun HomeScreen(
@@ -81,9 +88,6 @@ fun HomeScreen(
     val continueList by vm.continueWatching.collectAsStateWithLifecycle()
     val featured by vm.featured.collectAsStateWithLifecycle()
     val favorites by vm.favorites.collectAsStateWithLifecycle()
-    val recentMovies by vm.recentMovies.collectAsStateWithLifecycle()
-    val recentSeries by vm.recentSeries.collectAsStateWithLifecycle()
-    val recentAnime by vm.recentAnime.collectAsStateWithLifecycle()
     val library by vm.library.collectAsStateWithLifecycle()
 
     val cardWidth = if (isTv) 150.dp else 112.dp
@@ -95,11 +99,19 @@ fun HomeScreen(
         else (primary + library.filter { it.posterUrl.isNotBlank() }).distinctBy { it.id }.take(6)
     }
 
+    val listState = rememberLazyListState()
+    // 轮播图高度大概是屏幕宽度的 0.55 倍（HeroBanner 的 aspectRatio 是 16:9）
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val heroCollapseDist = configuration.screenWidthDp.dp * 0.55f
+    // 顶栏透明度：下滑到 heroCollapseDist 后完全淡出
+    val rawFade = (listState.firstVisibleItemScrollOffset / heroCollapseDist.value).coerceIn(0f, 1f)
+    val fadeAlpha by animateFloatAsState(targetValue = 1f - rawFade, label = "topbar_fade")
+
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                // 顶部氛围渐变：让页面不是纯黑底，视觉更丰富
                 .background(
                     Brush.verticalGradient(
                         0f to AppColors.Brand.copy(alpha = 0.09f),
@@ -123,67 +135,53 @@ fun HomeScreen(
                 item { EmptyState(vm) }
             }
 
-        // ---------- 继续观看 ----------
-        if (continueList.isNotEmpty()) {
-            item { SectionTitle("继续观看") }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 18.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(continueList, key = { "cw_${it.id}" }) { item ->
-                        ContinueCard(item = item, onClick = { onPlay(item) })
-                    }
-                }
-            }
-        }
-
-        // ---------- 收藏 ----------
-        if (favorites.isNotEmpty()) {
-            item { SectionTitle("我的收藏", trailing = { CountBadge(favorites.size) }) }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 18.dp),
-                    horizontalArrangement = Arrangement.spacedBy(9.dp)
-                ) {
-                    items(favorites, key = { "fav_${it.id}" }) { item ->
-                        Box(Modifier.width(cardWidth)) {
-                            PosterCard(item = item, onClick = { onOpenDetail(item.id) })
+            // ---------- 继续观看 ----------
+            if (continueList.isNotEmpty()) {
+                item { SectionTitle("继续观看") }
+                item {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 18.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(continueList, key = { "cw_${it.id}" }) { item ->
+                            ContinueCard(item = item, onClick = { onPlay(item) })
                         }
                     }
                 }
             }
+
+            // ---------- 收藏 ----------
+            if (favorites.isNotEmpty()) {
+                item { SectionTitle("我的收藏", trailing = { CountBadge(favorites.size) }) }
+                item {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 18.dp),
+                        horizontalArrangement = Arrangement.spacedBy(9.dp)
+                    ) {
+                        items(favorites, key = { "fav_${it.id}" }) { item ->
+                            Box(Modifier.width(cardWidth)) {
+                                PosterCard(item = item, onClick = { onOpenDetail(item.id) })
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---------- 动态分区：根据库内实际存在的 kind 渲染 ----------
+            DynamicGallerySections(
+                library = library,
+                cardWidth = cardWidth,
+                onMore = onOpenGenre,
+                onOpenDetail = onOpenDetail
+            )
         }
 
-        // ---------- 电影 / 剧集 / 动漫画廊 ----------
-        GallerySection(
-            title = "电影",
-            items = recentMovies,
-            cardWidth = cardWidth,
-            onMore = { onOpenGenre(MediaKind.MOVIE, null) },
-            onOpenDetail = onOpenDetail
-        )
-        GallerySection(
-            title = "剧集",
-            items = recentSeries,
-            cardWidth = cardWidth,
-            onMore = { onOpenGenre(MediaKind.SERIES, null) },
-            onOpenDetail = onOpenDetail
-        )
-        GallerySection(
-            title = "动漫",
-            items = recentAnime,
-            cardWidth = cardWidth,
-            onMore = { onOpenGenre(null, "动漫") },
-            onOpenDetail = onOpenDetail
-        )
-        }
-
-        // ---------- 透明悬浮顶栏（压在轮播图之上） ----------
+        // ---------- 透明悬浮顶栏（压在轮播图之上，滚动时淡入淡出） ----------
         Row(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .fillMaxWidth()
+                .graphicsLayer { alpha = fadeAlpha }
                 .padding(start = 20.dp, end = 10.dp, top = 8.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -217,6 +215,50 @@ fun HomeScreen(
                 }
             }
         }
+    }
+}
+
+/**
+ * 动态分区：根据 library 里实际存在的 kind 渲染画廊块。
+ *
+ * 不写死「电影/剧集/动漫」三行——Emby 源可能只有电影、TVBox 源可能有更多类型，
+ * 有什么渲染什么，空的跳过。优先级：MOVIE → SERIES → (其他 kind)
+ * 动漫的判定：kind=EPISODE 且 genres 里含「动漫」，或者 genres 里含「动漫」的直接列。
+ */
+private fun LazyListScope.DynamicGallerySections(
+    library: List<MediaEntity>,
+    cardWidth: Dp,
+    onMore: (kind: String?, genre: String?) -> Unit,
+    onOpenDetail: (Long) -> Unit
+) {
+    if (library.isEmpty()) return
+
+    data class GalleryBlock(val title: String, val kind: String?, val genre: String?, val items: List<MediaEntity>)
+
+    // 电影：kind=MOVIE，取最新 10
+    val movies = library.filter { it.kind == MediaKind.MOVIE }.take(10)
+    // 剧集：kind=SERIES（排除 EPISODE），取最新 10
+    val series = library.filter { it.kind == MediaKind.SERIES }.take(10)
+    // 动漫：genres 含「动漫/动画/anime」，取最新 10
+    val animeKeywords = listOf("动漫", "动画", "anime")
+    val anime = library.filter {
+        (it.kind == MediaKind.SERIES || it.kind == MediaKind.MOVIE) &&
+            animeKeywords.any { kw -> it.genres.contains(kw, ignoreCase = true) }
+    }.take(10)
+
+    val blocks = mutableListOf<GalleryBlock>()
+    if (movies.isNotEmpty()) blocks += GalleryBlock("电影", MediaKind.MOVIE, null, movies)
+    if (series.isNotEmpty()) blocks += GalleryBlock("剧集", MediaKind.SERIES, null, series)
+    if (anime.isNotEmpty()) blocks += GalleryBlock("动漫", null, "动漫", anime)
+
+    for (b in blocks) {
+        GallerySection(
+            title = b.title,
+            items = b.items,
+            cardWidth = cardWidth,
+            onMore = { onMore(b.kind, b.genre) },
+            onOpenDetail = onOpenDetail
+        )
     }
 }
 

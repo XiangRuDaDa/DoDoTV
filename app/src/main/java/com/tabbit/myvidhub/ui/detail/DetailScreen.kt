@@ -263,14 +263,19 @@ fun DetailScreen(
     )
 
     // 整页填充色：顶部 0~headerRatio 全是主色（和海报覆盖区域对齐），headerRatio 之后才往深色渐变。
-    // 这样 headerScrim（海报 → 主色）和 bgBrush（主色 → 深色）首尾相接，看不到硬边。
+    // 渐变分成两段：headerRatio → midColor（柔和过渡），midColor → animatedBottom（快速压暗），
+    // 两段都要足够长，让「海报底部的主色」和「页面深处的深色」之间看不到明显的折点。
     val bgBrush = remember(animatedTop, animatedBottom, headerRatio) {
         val r = headerRatio
-        val mid = r + (1f - r) * 0.45f  // 中间控制点：主色到深色过渡的中点
-        val midColor = lerp(animatedTop, animatedBottom, 0.55f)
+        // 过渡覆盖 headerRatio ~ 1f 的整个后半段，中点设在 75% 处让前半更慢、后半更快
+        val mid = r + (1f - r) * 0.55f
+        val midColor = lerp(animatedTop, animatedBottom, 0.5f)
+        val quarter = r + (1f - r) * 0.30f
+        val quarterColor = lerp(animatedTop, animatedBottom, 0.25f)
         Brush.verticalGradient(
             0f to animatedTop,
-            r to animatedTop,    // 海报覆盖区 = 纯主色，与 headerScrim 终点衔接
+            r to animatedTop,              // 海报覆盖区 = 纯主色，与 headerScrim 终点无缝
+            quarter to quarterColor,
             mid to midColor,
             1f to animatedBottom
         )
