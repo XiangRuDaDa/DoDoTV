@@ -61,6 +61,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -469,33 +470,16 @@ fun DetailScreen(
                             )
                         }
 
-                        // 右侧：分辨率 + 文件大小（紧凑单行）
-                        Row(
-                            modifier = Modifier.weight(0.28f),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val res = scraped?.videoResolution.orEmpty()
-                            val size = scraped?.fileSizeBytes?.takeIf { it > 0 }
-                            if (res.isNotBlank()) {
-                                Text(
-                                    text = res,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = Color.White.copy(alpha = 0.88f),
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                            if (res.isNotBlank() && size != null) {
-                                Text("  ·  ", color = Color.White.copy(alpha = 0.4f),
-                                    style = MaterialTheme.typography.labelSmall)
-                            }
-                            if (size != null) {
-                                Text(
-                                    text = PlayerFactory.formatBytes(size),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White.copy(alpha = 0.68f)
-                                )
-                            }
+                        // 右侧：仅文件大小
+                        val size = scraped?.fileSizeBytes?.takeIf { it > 0 }
+                        if (size != null) {
+                            Text(
+                                text = PlayerFactory.formatBytes(size),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White.copy(alpha = 0.68f),
+                                textAlign = TextAlign.End,
+                                modifier = Modifier.weight(0.28f)
+                            )
                         }
 
                         val fav = item.favorite

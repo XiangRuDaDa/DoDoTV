@@ -19,7 +19,7 @@
 
     <!-- 控制条背景遮罩：只覆盖视频，不额外叠一层 Compose 浮层 -->
     <View
-        android:id="@+id/doudou_controls_scrim"
+        android:id="@id/exo_controls_background"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="#59000000" />
@@ -109,7 +109,7 @@
 
     <!-- ================= 底部：进度 + 功能按钮 ================= -->
     <LinearLayout
-        android:id="@+id/doudou_bottom_bar"
+        android:id="@id/exo_bottom_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
@@ -121,6 +121,7 @@
         android:paddingBottom="10dp">
 
         <LinearLayout
+            android:id="@id/exo_time"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"

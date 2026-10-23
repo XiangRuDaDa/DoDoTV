@@ -214,14 +214,34 @@ class TvBoxClient(
         merged: LinkedHashMap<String, Vod>,
         limit: Int
     ) = withContext(Dispatchers.IO) {
-        val loaderKey = runCatching { spiderLoader!!.ensureLoaded(configSpiderUrl) }.getOrNull() ?: return@withContext
-        for (site in sites.take(3)) {
+        val loader = spiderLoader ?: throw IllegalStateException("缺少 Android Context，无法加载爬虫")
+        val loaderKey = try {
+            loader.ensureLoaded(configSpiderUrl)
+        } catch (e: Exception) {
+            throw IllegalStateException("加载 spider 包失败：${e.message ?: e.javaClass.simpleName}")
+        }
+
+        val reasons = ArrayList<String>()
+        for (site in sites.take(4)) {
             if (merged.size >= limit) break
-            val proxy = spiderLoader!!.getSpider(loaderKey, site.api, site.ext) ?: continue
-            val json = proxy.homeContent(filter = true) ?: continue
-            CatVodResultParser.parseVodList(json, site.key, site.name).forEach {
-                merged["${site.key}:${it.vodId}"] = it
-            }
+            val proxy = loader.getSpider(loaderKey, site.api, site.ext) ?: run {
+                reasons += "${site.name}: ${loader.lastError}"
+                null
+            } ?: continue
+            val json = proxy.homeContent(filter = true) ?: run {
+                reasons += "${site.name}: homeContent 返回空"
+                null
+            } ?: continue
+            val list = CatVodResultParser.parseVodList(json, site.key, site.name)
+            if (list.isEmpty()) reasons += "${site.name}: homeContent 无影片"
+            list.forEach { merged["${site.key}:${it.vodId}"] = it }
+        }
+
+        if (merged.isEmpty()) {
+            throw IllegalStateException(
+                if (reasons.isEmpty()) "该配置的爬虫站点没有返回任何影片"
+                else "爬虫站点均无数据：${reasons.take(3).joinToString("；")}"
+            )
         }
     }
 
