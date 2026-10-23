@@ -188,9 +188,15 @@ fun HomeScreen(
                 Modifier
                     .weight(1f)
                     .graphicsLayer {
-                        val raw = if (heroCollapseDist == 0) 0f
-                            else (listState.firstVisibleItemScrollOffset.toFloat() / heroCollapseDist).coerceIn(0f, 1f)
-                        alpha = 1f - raw
+                        // 当第一个可见 item index 越过 hero（index >= 1）时，alpha 永久归零；
+                        // 否则按 heroCollapseDist 内的 offset 线性淡出 —— 这样 index 切换瞬间不会闪回
+                        val alpha = if (listState.firstVisibleItemIndex > 0) 0f
+                        else if (heroCollapseDist == 0) 1f
+                        else {
+                            val raw = listState.firstVisibleItemScrollOffset.toFloat() / heroCollapseDist
+                            (1f - raw).coerceIn(0f, 1f)
+                        }
+                        this.alpha = alpha
                     }
             ) {
                 Text(
@@ -240,7 +246,7 @@ fun HomeScreen(
  */
 private const val LAZY_TAKE = 10
 private const val MIN_GENRE_ITEMS = 2
-private const val MAX_GENRE_SECTIONS = 6
+private const val MAX_GENRE_SECTIONS = 4
 
 private fun LazyListScope.DynamicGallerySections(
     library: List<MediaEntity>,
@@ -267,8 +273,8 @@ private fun LazyListScope.DynamicGallerySections(
     val genreToItems = mutableMapOf<String, MutableList<MediaEntity>>()
     val genrePattern = Regex("[,，、/\\s]+")
     for (item in library) {
-        val parts = item.genres.split(genrePattern).map { it.trim() }.filter { it.isNotBlank() }
-        // 一部片可以同时进多个 genre（科幻 + 动作 + 冒险...）
+        // distinct() 防止 genres 字段有重复标签（如 "科幻,科幻,动作"）导致同一 item 被加两次
+        val parts = item.genres.split(genrePattern).map { it.trim() }.filter { it.isNotBlank() }.distinct()
         for (g in parts) {
             genreToItems.getOrPut(g) { mutableListOf() }.add(item)
         }
@@ -276,8 +282,9 @@ private fun LazyListScope.DynamicGallerySections(
     // 过滤数量 < MIN_GENRE_ITEMS、kind 分区已覆盖的 genre（如「电影」genre 映射到 MOVIE kind），再按数量倒序取前 MAX_GENRE_SECTIONS
     val kindAsGenre = setOf("电影", "剧集", "单集")
     val genreBlocks = genreToItems.entries
+        .map { (g, items) -> g to items.distinctBy { it.id } }
         .filter { (g, items) -> items.size >= MIN_GENRE_ITEMS && g !in kindAsGenre }
-        .sortedByDescending { it.value.size }
+        .sortedByDescending { it.second.size }
         .take(MAX_GENRE_SECTIONS)
 
     // 先 kind 后 genre

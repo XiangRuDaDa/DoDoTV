@@ -385,6 +385,11 @@ class PhonePlayerActivity : ComponentActivity() {
             return
         }
 
+        // 必须先释放旧 player 再创建新的 —— SimpleCache 单例同一时刻只能被一个 player 引用，
+        // 否则会抛 IllegalStateException 或出现 BAD_HTTP_STATUS 等奇怪症状
+        player?.release()
+        player = null
+
         val p = PlayerFactory.createPhonePlayer(this)
         player = p
         playerView?.player = p

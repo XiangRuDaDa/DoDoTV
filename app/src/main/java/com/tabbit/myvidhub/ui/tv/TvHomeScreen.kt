@@ -347,7 +347,7 @@ private fun TvPosterRow(
  */
 private const val TV_LAZY_TAKE = 12
 private const val TV_MIN_GENRE_ITEMS = 2
-private const val TV_MAX_GENRE_SECTIONS = 6
+private const val TV_MAX_GENRE_SECTIONS = 4
 
 private fun LazyListScope.DynamicTvGallerySections(
     library: List<MediaEntity>,
@@ -373,13 +373,16 @@ private fun LazyListScope.DynamicTvGallerySections(
     val genreToItems = mutableMapOf<String, MutableList<MediaEntity>>()
     val genrePattern = Regex("[,，、/\\s]+")
     for (item in library) {
-        val parts = item.genres.split(genrePattern).map { it.trim() }.filter { it.isNotBlank() }
+        // distinct() 防止 genres 字段重复标签（如 "科幻,科幻,动作"）导致同一 item 被加两次
+        val parts = item.genres.split(genrePattern).map { it.trim() }.filter { it.isNotBlank() }.distinct()
         for (g in parts) genreToItems.getOrPut(g) { mutableListOf() }.add(item)
     }
+    // 额外保险：每个 genre list 内按 item.id 去重
     val kindAsGenre = setOf("电影", "剧集", "单集")
     val genreBlocks = genreToItems.entries
+        .map { (g, items) -> g to items.distinctBy { it.id } }
         .filter { (g, items) -> items.size >= TV_MIN_GENRE_ITEMS && g !in kindAsGenre }
-        .sortedByDescending { it.value.size }
+        .sortedByDescending { it.second.size }
         .take(TV_MAX_GENRE_SECTIONS)
 
     for ((kind, items) in kindBlocks) {
