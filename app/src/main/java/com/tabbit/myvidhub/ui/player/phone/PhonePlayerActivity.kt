@@ -223,9 +223,16 @@ class PhonePlayerActivity : ComponentActivity() {
                 toastState = "条目不存在"
                 return@launch
             }
+            // 提前从 Room 查 source token 构造 header —— 第二个 Emby 源严格鉴权需要 X-Emby-Authorization
+            val headers = buildMap {
+                val source = runCatching { repo.getSource(item.sourceId) }.getOrNull()
+                if (source?.token?.isNotBlank() == true) {
+                    put("X-Emby-Authorization", "MediaBrowser Token=\"${source.token}\"")
+                }
+            }
             current = item
             titleState = displayTitle(item)
-            startPlayback(item)
+            startPlayback(item, headers = headers)
             loadEpisodes(item)
         }
     }
@@ -379,7 +386,11 @@ class PhonePlayerActivity : ComponentActivity() {
             item.title
         }
 
-    private fun startPlayback(item: MediaEntity, startPosition: Long = item.positionMs) {
+    private fun startPlayback(
+        item: MediaEntity,
+        startPosition: Long = item.positionMs,
+        headers: Map<String, String> = emptyMap()
+    ) {
         if (item.uri.isBlank()) {
             toastState = "该条目没有可播放地址（可能需要在详情页重新加载）"
             return
@@ -390,7 +401,7 @@ class PhonePlayerActivity : ComponentActivity() {
         player?.release()
         player = null
 
-        val p = PlayerFactory.createPhonePlayer(this)
+        val p = PlayerFactory.createPhonePlayer(this, headers)
         player = p
         playerView?.player = p
         // 进入页面直接播放，不展示控制条 —— 用户触摸/按键时 Media3 会自动 showController

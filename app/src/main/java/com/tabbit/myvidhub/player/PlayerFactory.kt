@@ -6,6 +6,7 @@ import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.cache.CacheDataSink
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
@@ -40,12 +41,12 @@ object PlayerFactory {
     /** 缓存目录名称 */
     private const val CACHE_DIR_NAME = "media_cache"
 
-    /** 磁盘缓存期望上限：手机 1GB */
-    private const val CACHE_PREFERRED_PHONE = 1L * 1024 * 1024 * 1024
-    /** 磁盘缓存期望上限：电视盒子普遍只有 8~16GB 存储，给 2GB 足够缓存两三部高码率片 */
-    private const val CACHE_PREFERRED_TV = 2L * 1024 * 1024 * 1024
+    /** 磁盘缓存期望上限：手机 256MB（之前 1GB 太激进，看个 20G 电影缓存膨胀到 20G 就是这个原因） */
+    private const val CACHE_PREFERRED_PHONE = 256L * 1024 * 1024
+    /** 磁盘缓存期望上限：电视盒子 512MB */
+    private const val CACHE_PREFERRED_TV = 512L * 1024 * 1024
     /** 保底缓存下限：低于这个值连一集都存不下，缓存就失去意义了 */
-    private const val CACHE_MIN_BYTES = 96L * 1024 * 1024
+    private const val CACHE_MIN_BYTES = 64L * 1024 * 1024
 
     /** 起播门槛：攒够 5 秒再出画面，避免「播两秒转一圈」 */
     private const val BUFFER_FOR_PLAYBACK_MS = 5_000
@@ -77,21 +78,45 @@ object PlayerFactory {
         }
 
     /** 手机端：屏幕小、常切前后台，缓冲略收一点以保证内存占用可控 */
-    fun createPhonePlayer(context: Context): ExoPlayer = build(context, isTv = false)
+    fun createPhonePlayer(
+        context: Context,
+        /** Emby 反向代理 / 严格鉴权时需要额外 header（如 X-Emby-Authorization） */
+        headers: Map<String, String> = emptyMap()
+    ): ExoPlayer = build(context, isTv = false, headers = headers)
 
     /** 电视端：码率更高、网络更稳，缓冲池更大、超时更宽松 */
-    fun createTvPlayer(context: Context): ExoPlayer = build(context, isTv = true)
+    fun createTvPlayer(
+        context: Context,
+        headers: Map<String, String> = emptyMap()
+    ): ExoPlayer = build(context, isTv = true, headers = headers)
 
-    private fun build(context: Context, isTv: Boolean): ExoPlayer {
+    private fun build(
+        context: Context,
+        isTv: Boolean,
+        headers: Map<String, String> = emptyMap()
+    ): ExoPlayer {
         val http = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(if (isTv) 12_000 else 8_000)
             .setReadTimeoutMs(if (isTv) 18_000 else 12_000)
             .setUserAgent(if (isTv) "DouDouTV/3.0 (AndroidTV)" else "DouDouTV/3.0 (Android)")
+            .apply {
+                if (headers.isNotEmpty()) setDefaultRequestProperties(headers)
+            }
+
+        // CacheDataSink fragmentSize —— 行业标准做法：把大文件切成 2MB 碎片存入 cache
+        // 每个碎片是一个独立的 cache entry，LRU 就能在写入新碎片时淘汰远离当前
+        // 播放位置的旧碎片，实现滑动窗口式缓存（Netflix/HLS 天然是这样，Emby 客户端
+        // 用这个参数模拟同样效果）。没有这个参数的话，一个 20GB 电影就是一个 entry，
+        // LRU 对正在 active 的 entry 毫无办法，缓存只会涨到文件大小。
+        val dataSink = CacheDataSink.Factory()
+            .setCache(cacheInstance(context, isTv))
+            .setFragmentSize(2 * 1024 * 1024) // 2MB 一片，越大 IO 越少但 LRU 粒度越粗
 
         val cached = CacheDataSource.Factory()
             .setCache(cacheInstance(context, isTv))
             .setUpstreamDataSourceFactory(http)
+            .setCacheWriteDataSinkFactory(dataSink)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
         val loadControl = DefaultLoadControl.Builder()

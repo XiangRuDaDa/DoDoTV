@@ -61,6 +61,7 @@ import androidx.compose.ui.graphics.toArgb
 import com.tabbit.myvidhub.core.Prefs
 import com.tabbit.myvidhub.data.scrape.ScrapeEngine
 import com.tabbit.myvidhub.data.scrape.ScrapeStrategy
+import com.tabbit.myvidhub.ui.components.FormatBadgesRow
 import com.tabbit.myvidhub.ui.components.TmdbCreditLine
 import androidx.compose.runtime.collectAsState
 
@@ -329,35 +330,13 @@ fun TvDetailScreen(
                             Spacer(Modifier.height(10.dp))
                             TvMetaRow(item)
 
-                            // 评分与类型：TMDB 的评分是全网加权值，比本地字段可信，
-                            // 刮到就用它，刮不到才回落本地记录
-                            val showRating = tmdb?.rating?.takeIf { it > 0.0 } ?: item.rating
-                            val showGenres = tmdb?.genres?.takeIf { it.isNotBlank() } ?: item.genres
-                            if (showRating > 0.0 || showGenres.isNotBlank()) {
-                                Spacer(Modifier.height(10.dp))
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    if (showRating > 0.0) {
-                                        Text(
-                                            "★ %.1f".format(showRating),
-                                            color = AppColors.Rating,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                    if (showGenres.isNotBlank()) {
-                                        Text(
-                                            showGenres,
-                                            color = Color.White.copy(alpha = 0.6f),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-                            }
+                            // 第三行：格式徽章（TMDB 图标 + Emby 解析到的 分辨率/HDR/Codec）
+                            FormatBadgesRow(
+                                tmdbEnabled = tmdb != null,
+                                resolution = scraped?.videoResolution.orEmpty(),
+                                hdr = scraped?.hdrType.orEmpty(),
+                                codec = scraped?.videoCodec.orEmpty()
+                            )
                             Spacer(Modifier.height(16.dp))
 
                             // 优先用刮削文案，其次回落本地记录

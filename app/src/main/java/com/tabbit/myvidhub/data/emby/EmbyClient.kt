@@ -53,7 +53,9 @@ class EmbyClient(
         val actors: List<Person>,
         val videoResolution: String = "",
         val hdrType: String = "",
-        val videoCodec: String = ""
+        val videoCodec: String = "",
+        /** 文件大小（字节），0 表示未知 */
+        val fileSizeBytes: Long = 0L
     )
 
     data class Person(val name: String, val role: String, val imageUrl: String)
@@ -243,7 +245,7 @@ class EmbyClient(
         val uid = currentUserId() ?: return@withContext null
         val json = runCatching {
             getJson("/Users/$uid/Items/$itemId", mapOf(
-                "Fields" to "People,Studios,Taglines,OfficialRating,MediaSources"
+                "Fields" to "People,Studios,Taglines,OfficialRating,MediaSources,MediaStreams"
             ))
         }.getOrNull() ?: return@withContext null
 
@@ -277,14 +279,22 @@ class EmbyClient(
         var videoResolution = ""
         var hdrType = ""
         var videoCodec = ""
-        val sources = json.optJSONArray("MediaSources")
-        if (sources != null && sources.length() > 0) {
-            // 取第一个可用的 MediaSource（通常主视频流）
-            val src = sources.optJSONObject(0)
-            val mediaStreams = src?.optJSONArray("MediaStreams")
-            if (mediaStreams != null) {
-                for (i in 0 until mediaStreams.length()) {
-                    val stream = mediaStreams.optJSONObject(i) ?: continue
+        // 文件大小：顶层 JSON 有 Size 字段（Emby 所有 item 都返回）
+        val fileSizeBytes = json.optLong("Size", 0L)
+
+        // Emby API 结构兼容：老版本顶层 MediaStreams，新版本 MediaSources[].MediaStreams[]
+        val streams = (json.optJSONArray("MediaSources")?.optJSONObject(0)?.optJSONArray("MediaStreams")
+            ?: json.optJSONArray("MediaStreams"))
+            ?: runCatching {
+                android.util.Log.d("EmbyClient", "MediaSources/MediaStreams 均未返回，原始 JSON keys: ${json.keys().asSequence().toList()}")
+                null
+            }.getOrNull()
+
+        if (streams != null) {
+            runCatching {
+                android.util.Log.d("EmbyClient", "MediaStreams count=${streams.length()}")
+                for (i in 0 until streams.length()) {
+                    val stream = streams.optJSONObject(i) ?: continue
                     if (stream.optString("Type") != "Video") continue
                     val height = stream.optInt("Height", 0)
                     val codec = stream.optString("Codec", "")
@@ -292,6 +302,7 @@ class EmbyClient(
                     val colorTransfer = stream.optString("ColorTransfer", "")
                     val hdrMode = stream.optString("HdrMode", "")
                     val title = stream.optString("Title", "")
+                    android.util.Log.d("EmbyClient", "VideoStream: height=$height codec=$codec range=$videoRange hdrMode=$hdrMode title=$title")
 
                     // 分辨率 → 标签
                     videoResolution = when {
@@ -328,12 +339,14 @@ class EmbyClient(
                     break
                 }
             }
+        } else {
+            android.util.Log.d("EmbyClient", "MediaStreams 为 null")
         }
 
         ItemDetail(
             tagline, officialRating, studios,
             directors.take(3), actors.take(12),
-            videoResolution, hdrType, videoCodec
+            videoResolution, hdrType, videoCodec, fileSizeBytes
         )
     }
 

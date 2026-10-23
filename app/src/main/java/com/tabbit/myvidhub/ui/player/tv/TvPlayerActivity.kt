@@ -135,8 +135,6 @@ class TvPlayerActivity : ComponentActivity() {
         repo = MediaRepository(applicationContext)
         mediaId = intent.getLongExtra(EXTRA_MEDIA_ID, 0L)
 
-        player = PlayerFactory.createTvPlayer(this)
-
         setContent {
             MyVidHubTheme {
                 TvPlayerScreen()
@@ -155,6 +153,17 @@ class TvPlayerActivity : ComponentActivity() {
                 toast = "找不到该媒体"
                 return@lifecycleScope0
             }
+            // 查 source token 构造 Emby header —— 第二个 Emby 源严格鉴权需要 X-Emby-Authorization
+            val headers = buildMap {
+                val source = runCatching { repo.getSource(item.sourceId) }.getOrNull()
+                if (source?.token?.isNotBlank() == true) {
+                    put("X-Emby-Authorization", "MediaBrowser Token=\"${source.token}\"")
+                }
+            }
+            // 先释放旧 player（如果有）再创建新的 —— SimpleCache 单例只能有一个引用
+            player?.release()
+            player = PlayerFactory.createTvPlayer(this@TvPlayerActivity, headers)
+
             current = item
             titleText = displayTitle(item)
             play(item, item.positionMs)

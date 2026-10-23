@@ -76,7 +76,9 @@ import com.tabbit.myvidhub.data.emby.EmbyClient
 import com.tabbit.myvidhub.data.model.MediaEntity
 import com.tabbit.myvidhub.data.model.MediaKind
 import com.tabbit.myvidhub.data.model.SourceKind
+import com.tabbit.myvidhub.player.PlayerFactory
 import com.tabbit.myvidhub.ui.LibraryViewModel
+import com.tabbit.myvidhub.ui.components.FormatBadgesRow
 import com.tabbit.myvidhub.ui.components.TmdbCreditLine
 import com.tabbit.myvidhub.ui.theme.AppColors
 import kotlinx.coroutines.Dispatchers
@@ -316,7 +318,6 @@ fun DetailScreen(
             val effectivePoster = item.posterUrl.ifBlank { tmdb?.posterUrl.orEmpty() }
             val effectiveOverview = item.overview.ifBlank { tmdb?.overview.orEmpty() }
             val effectiveRating = if (item.rating > 0) item.rating else tmdb?.rating ?: 0.0
-            val effectiveGenres = item.genres.ifBlank { tmdb?.genres.orEmpty() }
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -421,17 +422,8 @@ fun DetailScreen(
                                 }
                             }
 
-                            if (effectiveGenres.isNotBlank()) {
-                                Text(
-                                    text = effectiveGenres,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White.copy(alpha = 0.62f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-
-                            // 格式徽章条：TMDB 图标（开启 TMDB 时） + Emby 解析到的分辨率/HDR/Codec
+                            // 第三行：格式徽章（TMDB 图标 + Emby 解析到的 分辨率/HDR/Codec）
+                            // 有数据才显示，什么都没有就自然留出空行不占位
                             FormatBadgesRow(
                                 tmdbEnabled = tmdb != null,
                                 resolution = scraped?.videoResolution.orEmpty(),
@@ -442,14 +434,15 @@ fun DetailScreen(
                     }
                 }
 
-                // ---------- 播放按钮 ----------
+                // ---------- 播放按钮 + 分辨率 + 文件大小 ----------
                 item {
                     Row(
                         Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 18.dp)
                             .padding(top = 4.dp, bottom = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         val target = playTarget(item, visibleEpisodes)
                         Button(
@@ -459,7 +452,7 @@ fun DetailScreen(
                                 containerColor = AppColors.Brand,
                                 contentColor = Color.White
                             ),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(0.72f)
                         ) {
                             Icon(
                                 Icons.Filled.PlayArrow,
@@ -474,6 +467,35 @@ fun DetailScreen(
                                     ep?.let { "继续观看  ${it.title}" } ?: "开始播放"
                                 } else "播放"
                             )
+                        }
+
+                        // 右侧：分辨率 + 文件大小（紧凑单行）
+                        Row(
+                            modifier = Modifier.weight(0.28f),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val res = scraped?.videoResolution.orEmpty()
+                            val size = scraped?.fileSizeBytes?.takeIf { it > 0 }
+                            if (res.isNotBlank()) {
+                                Text(
+                                    text = res,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = Color.White.copy(alpha = 0.88f),
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                            if (res.isNotBlank() && size != null) {
+                                Text("  ·  ", color = Color.White.copy(alpha = 0.4f),
+                                    style = MaterialTheme.typography.labelSmall)
+                            }
+                            if (size != null) {
+                                Text(
+                                    text = PlayerFactory.formatBytes(size),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White.copy(alpha = 0.68f)
+                                )
+                            }
                         }
 
                         val fav = item.favorite
@@ -721,124 +743,6 @@ private fun TypeChip(label: String) {
             color = Color.White,
             fontWeight = FontWeight.Medium
         )
-    }
-}
-
-/**
- * 格式徽章条：横向排列，每个徽章都是圆角矩形 + 半透明深色底 + 白字。
- * 全部是紧凑的图标/短码，不出现「数据来源」等文字解释。
- *
- * - TMDB 图标：官方 Simple Icons 的蓝色 logo（只有开启 TMDB 数据时才显示）
- * - 分辨率：4K / 1080p / 720p / SD
- * - HDR：Dolby Vision（用 ic_dolby 官方图标 + 白字 DV 叠加）/ HDR / HDR10+ / HLG
- * - Codec：HEVC / H.264 / AV1 / VP9（可选展示）
- *
- * 顺序：TMDB → 分辨率 → HDR → Codec。空字段跳过，整行也可全部为空（返回空 Row）。
- */
-@Composable
-private fun FormatBadgesRow(
-    tmdbEnabled: Boolean,
-    resolution: String,
-    hdr: String,
-    codec: String
-) {
-    val items = buildList {
-        if (tmdbEnabled) add(Badge.Tmdb)
-        resolution.takeIf { it.isNotBlank() }?.let { add(Badge.Resolution(it)) }
-        hdr.takeIf { it.isNotBlank() }?.let { add(Badge.Hdr(it)) }
-        // Codec 只在有明显特色时展示（H.264 太通用可以隐藏）
-        codec.takeIf { it.isNotBlank() && it != "H.264" }?.let { add(Badge.Codec(it)) }
-    }
-    if (items.isEmpty()) return
-
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(top = 6.dp)
-    ) {
-        items.forEach { badge ->
-            when (badge) {
-                Badge.Tmdb -> TmdbIconOnly()
-                is Badge.Resolution -> TextBadge(badge.label, bg = Color(0xFF01B4E4))
-                is Badge.Hdr -> when (badge.label) {
-                    "Dolby Vision" -> DolbyVisionBadge()
-                    "HDR10+" -> TextBadge("HDR10+", bg = Color(0xFFE50914))
-                    "HDR10" -> TextBadge("HDR10", bg = Color(0xFF2E7D32))
-                    "HDR" -> TextBadge("HDR", bg = Color(0xFF2E7D32))
-                    "HLG" -> TextBadge("HLG", bg = Color(0xFFF57C00))
-                    else -> TextBadge(badge.label, bg = Color(0xFF455A64))
-                }
-                is Badge.Codec -> TextBadge(badge.label, bg = Color(0xFF455A64))
-            }
-        }
-    }
-}
-
-private sealed interface Badge {
-    data object Tmdb : Badge
-    data class Resolution(val label: String) : Badge
-    data class Hdr(val label: String) : Badge
-    data class Codec(val label: String) : Badge
-}
-
-/** 纯文字徽章：圆角矩形 + 纯色背景 + 白色粗体字。尺寸统一 28.dp 高。 */
-@Composable
-private fun TextBadge(label: String, bg: Color) {
-    Box(
-        Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(bg.copy(alpha = 0.88f))
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = label,
-            color = Color.White,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.ExtraBold,
-            letterSpacing = 0.5.sp,
-            lineHeight = 12.sp
-        )
-    }
-}
-
-/** 只保留 TMDB 官方图标（Simple Icons · 纯蓝 logo），无任何文字。 */
-@Composable
-private fun TmdbIconOnly() {
-    Icon(
-        painter = painterResource(R.drawable.ic_tmdb_logo),
-        contentDescription = "TMDB",
-        tint = Color(0xFF01B4E4),
-        modifier = Modifier.height(22.dp)
-    )
-}
-
-/** Dolby Vision 徽章：白底黑色 Dolby 官方 D 字母图标 + 右上角 DV 小字 */
-@Composable
-private fun DolbyVisionBadge() {
-    Box(
-        Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(Color.White)
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                painter = painterResource(R.drawable.ic_dolby),
-                contentDescription = null,
-                tint = Color.Black,
-                modifier = Modifier.height(16.dp)
-            )
-            Spacer(Modifier.width(2.dp))
-            Text(
-                "VISION",
-                color = Color.Black,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = 0.8.sp
-            )
-        }
     }
 }
 
