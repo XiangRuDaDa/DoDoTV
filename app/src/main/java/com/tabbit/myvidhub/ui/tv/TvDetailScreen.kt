@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -34,6 +35,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import com.tabbit.myvidhub.data.emby.EmbyClient
@@ -368,59 +372,94 @@ fun TvDetailScreen(
                             .fillMaxWidth()
                             .padding(start = 56.dp, end = 56.dp)
                     ) {
-                        // 标题：TMDB 艺术字 Logo（同手机端做法），没有就用大字号文字
-                        if (logo.isNotBlank()) {
-                            AsyncImage(
-                                model = logo,
-                                contentDescription = item.title,
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier
-                                    .height(110.dp)
-                                    .widthIn(max = 520.dp)
-                            )
-                        } else {
-                            Text(
-                                item.title,
-                                color = Color.White,
-                                style = MaterialTheme.typography.displaySmall,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        // ===== L0 常驻：白色胶囊评分 + 片源徽章行 =====
-                        // 标题正下方先给「TMDB x.x」白胶囊评分，再给一行 FormatBadgesRow
-                        // （TMDB / 分辨率 / HDR / 编码），最后才是播放按钮。
-                        val ratingValue = (if (item.rating > 0) item.rating else tmdb?.rating ?: 0.0)
-                        if (ratingValue > 0.0) {
-                            Spacer(Modifier.height(14.dp))
-                            Box(
-                                Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.White)
-                                    .padding(horizontal = 12.dp, vertical = 4.dp)
-                            ) {
+                        // 标题位：Logo 与文字标题共用同一块「标题槽」。
+                        // 以前有刮削时是一张很大的艺术字图、没有刮削时是两行大字，
+                        // 两种片子的首屏高度和重心完全不同。现在统一成：起始高度一致、
+                        // Logo 高度封顶，刮削成功与否页面骨架都长得一样。
+                        val titleSlotHeight = 52.dp
+                        var logoFailed by remember(logo) { mutableStateOf(false) }
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = titleSlotHeight),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            if (logo.isNotBlank() && !logoFailed) {
+                                AsyncImage(
+                                    model = logo,
+                                    contentDescription = item.title,
+                                    contentScale = ContentScale.Fit,
+                                    onError = { logoFailed = true },
+                                    modifier = Modifier
+                                        .heightIn(max = titleSlotHeight)
+                                        .widthIn(max = 340.dp)
+                                )
+                            } else {
                                 Text(
-                                    "TMDB " + "%.1f".format(ratingValue),
-                                    color = Color.Black,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Bold
+                                    item.title,
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.displaySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
-                        Spacer(Modifier.height(10.dp))
-                        FormatBadgesRow(
-                            tmdbEnabled = tmdb != null,
-                            resolution = scraped?.videoResolution.orEmpty(),
-                            hdr = scraped?.hdrType.orEmpty(),
-                            codec = scraped?.videoCodec.orEmpty()
-                        )
 
-                        // 操作按钮行：播放（带集号） + 从头开始（仅看过后出现） + 收藏
-                        // 参考截图的三按钮结构，但保留我们自己的胶囊按钮样式
-                        Spacer(Modifier.height(22.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        // ===== L0 常驻骨架：评分胶囊 + 片源徽章始终同一行 =====
+                        // 关键点：这里不做「有数据才渲染」的分支。有刮削、没刮削都必须
+                        // 出同样的结构，缺数据只把文字降级（TMDB x.x → 评分 x.x → 暂无评分），
+                        // 这样两种片子的首屏高度和节奏才一致，不会一个多一块、一个少一块。
+                        val tmdbRating = tmdb?.rating ?: 0.0
+                        val hasTmdbRating = tmdb != null && tmdbRating > 0.0
+                        val shownRating = when {
+                            hasTmdbRating -> tmdbRating
+                            item.rating > 0.0 -> item.rating
+                            else -> 0.0
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // 评分胶囊：恒定存在，三种状态只换文字和底色深浅
+                            Box(
+                                Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(
+                                        if (shownRating > 0.0) Color.White
+                                        else Color.White.copy(alpha = 0.16f)
+                                    )
+                                    .padding(horizontal = 9.dp, vertical = 3.dp)
+                            ) {
+                                Text(
+                                    when {
+                                        hasTmdbRating -> "TMDB " + "%.1f".format(tmdbRating)
+                                        shownRating > 0.0 -> "评分 " + "%.1f".format(shownRating)
+                                        else -> "暂无评分"
+                                    },
+                                    color = if (shownRating > 0.0) Color.Black
+                                    else Color.White.copy(alpha = 0.62f),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            // 评分胶囊已带「TMDB」字样，徽章行不再重复放 TMDB
+                            FormatBadgesRow(
+                                tmdbEnabled = tmdb != null && !hasTmdbRating,
+                                resolution = scraped?.videoResolution.orEmpty(),
+                                hdr = scraped?.hdrType.orEmpty(),
+                                codec = scraped?.videoCodec.orEmpty()
+                            )
+                        }
+
+                        // 操作按钮行：播放 + 从头开始（看过后才出现） + 收藏（圆形图标）
+                        // 按钮整体收小一档、收藏改用图标，视觉重心让回给海报。
+                        Spacer(Modifier.height(16.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             // 主按钮：剧集带具体集号，电影就是「立即播放」
                             TvPlayButton(
                                 text = run {
@@ -431,6 +470,7 @@ fun TvDetailScreen(
                                         if (item.positionMs > 5_000L) "继续播放" else "立即播放"
                                     }
                                 },
+                                compact = true,
                                 modifier = Modifier.focusRequester(playFocusRequester),
                                 onClick = { onPlay(item.id) }
                             )
@@ -438,15 +478,17 @@ fun TvDetailScreen(
                                 TvPillButton(
                                     text = "从头开始",
                                     primary = false,
+                                    compact = true,
                                     onClick = {
                                         vm.resetPosition(item.id)
                                         onPlay(item.id)
                                     }
                                 )
                             }
-                            TvPillButton(
-                                text = if (item.favorite) "已收藏" else "收藏",
-                                primary = false,
+                            TvIconButton(
+                                icon = if (item.favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                                active = item.favorite,
+                                contentDescription = if (item.favorite) "取消收藏" else "收藏",
                                 onClick = { vm.toggleFavorite(item.id, !item.favorite) }
                             )
                         }
@@ -736,7 +778,10 @@ private fun FormatBadgesRow(
     if (resolution.isNotBlank()) badges.add(resolution)
     if (hdr.isNotBlank()) badges.add(hdr)
     if (codec.isNotBlank()) badges.add(codec.uppercase())
-    if (badges.isEmpty()) return
+    // 一条徽章都没有时也要占位（渲染一个灰色「—」），
+    // 否则整行直接消失，有没有刮削的页面骨架会不一样，首屏高度会跳。
+    val placeholder = badges.isEmpty()
+    if (placeholder) badges.add("—")
 
     Row(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -754,8 +799,11 @@ private fun FormatBadgesRow(
             ) {
                 Text(
                     label,
-                    color = if (label == "TMDB") AppColors.BrandSoft
-                    else Color.White.copy(alpha = 0.72f),
+                    color = when {
+                        label == "TMDB" -> AppColors.BrandSoft
+                        placeholder -> Color.White.copy(alpha = 0.34f)
+                        else -> Color.White.copy(alpha = 0.72f)
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Medium
                 )

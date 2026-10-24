@@ -21,6 +21,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -60,6 +62,7 @@ fun TvPillButton(
     text: String,
     modifier: Modifier = Modifier,
     primary: Boolean = true,
+    compact: Boolean = false,
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -85,12 +88,16 @@ fun TvPillButton(
                 onClick = onClick
             )
             .focusable()
-            .padding(horizontal = 26.dp, vertical = 12.dp)
+            .padding(
+                horizontal = if (compact) 18.dp else 26.dp,
+                vertical = if (compact) 8.dp else 12.dp
+            )
     ) {
         Text(
             text,
             color = if (primary && (focused || !primary)) Color.Black else Color.White,
-            style = MaterialTheme.typography.titleMedium,
+            style = if (compact) MaterialTheme.typography.labelLarge
+            else MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1
         )
@@ -105,6 +112,7 @@ fun TvPillButton(
 fun TvPlayButton(
     text: String,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -123,7 +131,10 @@ fun TvPlayButton(
                 onClick = onClick
             )
             .focusable()
-            .padding(horizontal = 26.dp, vertical = 12.dp),
+            .padding(
+                horizontal = if (compact) 20.dp else 26.dp,
+                vertical = if (compact) 8.dp else 12.dp
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -135,9 +146,60 @@ fun TvPlayButton(
         Text(
             text,
             color = if (focused) Color.Black else Color.White,
-            style = MaterialTheme.typography.titleMedium,
+            style = if (compact) MaterialTheme.typography.labelLarge
+            else MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1
+        )
+    }
+}
+
+/**
+ * 圆形图标按钮：电视端的次操作（收藏等）用图标而不是长条文字胶囊。
+ * 圆形视觉更轻、横向只占一个按钮宽度，把省下来的空间留给海报；
+ * 聚焦时放大并加白边，符合十英尺界面的可辨识要求。
+ */
+@Composable
+fun TvIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+    contentDescription: String? = null
+) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (focused) 1.08f else 1f, tween(140), label = "tv_icon")
+
+    Box(
+        modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .size(46.dp)
+            .clip(RoundedCornerShape(50))
+            .background(
+                when {
+                    focused -> Color.White
+                    active -> Color.White.copy(alpha = 0.22f)
+                    else -> Color.White.copy(alpha = 0.12f)
+                }
+            )
+            .then(
+                if (focused) Modifier.border(2.dp, Color.White, RoundedCornerShape(50))
+                else Modifier.border(1.dp, Color.White.copy(alpha = 0.28f), RoundedCornerShape(50))
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .focusable(),
+        contentAlignment = Alignment.Center
+    ) {
+        androidx.compose.material3.Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = if (focused) Color.Black else Color.White,
+            modifier = Modifier.size(22.dp)
         )
     }
 }
