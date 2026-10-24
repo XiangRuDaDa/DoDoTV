@@ -300,14 +300,19 @@ class PhonePlayerActivity : ComponentActivity() {
     /**
      * 手势分发：
      *   · 横向滑动 → 快进/快退（滑过整屏 ≈ 1.5 倍时长）
-     *   · 左半屏上下滑 → 音量
-     *   · 右半屏上下滑 → 亮度
+     *   · 左边缘上下滑 → 音量
+     *   · 右边缘上下滑 → 亮度
      *   · 双击 → 播放/暂停（不弹出控制条）
+     *   · 单击 → 交给 PlayerView 弹控制条
      */
     private fun setupTouchSeek(view: PlayerView) {
         val slop = ViewConfiguration.get(this).scaledTouchSlop
         val doubleTapMs = ViewConfiguration.getDoubleTapTimeout()
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+        // 边缘调节区：左右各占屏宽 12%，中间区域不触发音量/亮度，
+        // 避免下拉系统任务栏时误触。
+        val edgeZone = 0.12f
 
         // 手势类型：用 Int 常量而不是 enum（enum 不能定义在函数内部）
         val G_NONE = 0; val G_SEEK = 1; val G_VOLUME = 2; val G_BRIGHTNESS = 3
@@ -356,9 +361,12 @@ class PhonePlayerActivity : ComponentActivity() {
                         val adx = abs(dx)
                         val ady = abs(dy)
                         if (adx <= slop && ady <= slop) return@setOnTouchListener false
+                        val w = v.width.coerceAtLeast(1)
                         gesture = when {
                             adx > ady * 1.4f -> G_SEEK
-                            else -> if (downX < v.width / 2f) G_VOLUME else G_BRIGHTNESS
+                            downX < w * edgeZone -> G_VOLUME
+                            downX > w * (1f - edgeZone) -> G_BRIGHTNESS
+                            else -> G_NONE  // 中间区域竖向滑动不处理，避免误触
                         }
                     }
                     when (gesture) {
@@ -368,25 +376,26 @@ class PhonePlayerActivity : ComponentActivity() {
                             val span = duration * 1.5f * (dx / v.width.coerceAtLeast(1))
                             targetPos = (startPos + span.toLong()).coerceIn(0L, duration)
                             showSeekPreview("${fmtTime(targetPos)} / ${fmtTime(duration)}")
+                            true
                         }
                         G_VOLUME -> {
                             val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                            // 上滑增大：屏幕高度对应 1.5 倍满量程，避免滑到底才到 0
                             val delta = (-dy / v.height.coerceAtLeast(1)) * max * 1.5f
                             val vol = (startVolume + delta).toInt().coerceIn(0, max)
                             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, vol, 0)
                             showSeekPreview("音量 ${vol * 100 / max.coerceAtLeast(1)}%")
+                            true
                         }
                         G_BRIGHTNESS -> {
-                            // 上滑增大：屏幕高度对应满量程
                             val delta = (-dy / v.height.coerceAtLeast(1))
                             val b = (startBrightness + delta).coerceIn(0.01f, 1f)
                             window.attributes = window.attributes.apply { screenBrightness = b }
                             showSeekPreview("亮度 ${(b * 100).toInt()}%")
+                            true
                         }
-                        G_NONE -> {}
+                        G_NONE -> false
+                        else -> false
                     }
-                    true
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -394,14 +403,13 @@ class PhonePlayerActivity : ComponentActivity() {
                         G_SEEK -> {
                             p.seekTo(targetPos)
                             showSeekPreview("${fmtTime(targetPos)} / ${fmtTime(p.duration)}")
+                            true
                         }
-                        G_VOLUME, G_BRIGHTNESS -> {
-                            // 提示由 showSeekPreview 的延迟自动消失
-                        }
-                        G_NONE -> {}
-                    }
-                    gesture = G_NONE
-                    true
+                        G_VOLUME, G_BRIGHTNESS -> true
+                        // 没有识别到手势（单击）：返回 false，让 PlayerView 弹控制条
+                        G_NONE -> false
+                        else -> false
+                    }.also { gesture = G_NONE }
                 }
 
                 else -> false

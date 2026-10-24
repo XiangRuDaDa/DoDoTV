@@ -223,7 +223,7 @@ fun TvSectionTitle(
     Row(
         modifier
             .fillMaxWidth()
-            .padding(start = 44.dp, end = 44.dp, top = 26.dp, bottom = 12.dp),
+            .padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
@@ -296,7 +296,7 @@ fun TvBackButton(onBack: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Box(
         Modifier
-            .padding(start = 44.dp, top = 28.dp)
+            .padding(start = 20.dp, top = 20.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(if (focused) Color.White else Color.Black.copy(alpha = 0.45f))
             .then(if (focused) Modifier.border(2.dp, Color.White, RoundedCornerShape(8.dp)) else Modifier)
@@ -322,7 +322,7 @@ fun TvBackButton(onBack: () -> Unit) {
 internal val TvRowSpacing = 18.dp
 
 /** 行首尾留白，保证聚焦放大时不被裁切 */
-internal val TvRowPadding = 44.dp
+internal val TvRowPadding = 20.dp
 
 /** 电视端可聚焦的小尺寸标签（题材筛选等） */
 @Composable

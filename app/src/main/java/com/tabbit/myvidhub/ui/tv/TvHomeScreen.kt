@@ -7,7 +7,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -126,7 +125,7 @@ fun TvHomeScreen(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 44.dp)
+            contentPadding = PaddingValues(bottom = 32.dp)
         ) {
             // ---------- 主视觉（置顶，TvTopBar 悬浮其上） ----------
             if (hero != null) {
@@ -135,7 +134,8 @@ fun TvHomeScreen(
                         item = hero,
                         playFocusRequester = heroPlayFocus,
                         onPlay = { onPlay(hero) },
-                        onDetail = { onDetail(hero.id) }
+                        onDetail = { onDetail(hero.id) },
+                        onDpadUpToTopBar = { topBarFirstFocus.requestFocus() }
                     )
                 }
             } else if (library.isEmpty()) {
@@ -197,7 +197,7 @@ private fun TvTopBar(
                     true
                 } else false
             }
-            .padding(start = 44.dp, end = 44.dp, top = 26.dp),
+            .padding(start = 20.dp, end = 20.dp, top = 18.dp),
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -225,12 +225,20 @@ private fun TvHero(
     item: MediaEntity,
     playFocusRequester: FocusRequester,
     onPlay: () -> Unit,
-    onDetail: () -> Unit
+    onDetail: () -> Unit,
+    onDpadUpToTopBar: () -> Unit
 ) {
     Box(
         Modifier
             .fillMaxWidth()
             .height(430.dp)
+            .onPreviewKeyEvent { event ->
+                if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
+                    (event.nativeKeyEvent?.keyCode ?: 0) == KeyEvent.KEYCODE_DPAD_UP) {
+                    onDpadUpToTopBar()
+                    true
+                } else false
+            }
     ) {
         AsyncImage(
             model = item.backdropUrl.ifBlank { item.posterUrl },
@@ -265,7 +273,7 @@ private fun TvHero(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(start = 44.dp, end = 44.dp, bottom = 44.dp),
+                .padding(start = 20.dp, end = 20.dp, bottom = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (item.logoUrl.isNotBlank()) {
@@ -324,7 +332,7 @@ private fun TvPosterRow(
 ) {
     LazyRow(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 44.dp, vertical = 10.dp),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         items(items, key = { "tv_${it.id}" }) { item ->

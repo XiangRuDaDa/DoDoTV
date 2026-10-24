@@ -99,7 +99,7 @@ fun TvSearchScreen(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 44.dp, end = 44.dp, top = 28.dp, bottom = 18.dp),
+                .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // 遥控器 Back 键统一由 TvApp.BackHandler 处理，不再放页面内返回按钮
@@ -120,11 +120,11 @@ fun TvSearchScreen(
                     "找到 ${results.size} 个结果",
                     color = AppColors.TextTertiary,
                     style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(start = 44.dp, bottom = 12.dp)
+                    modifier = Modifier.padding(start = 20.dp, bottom = 10.dp)
                 )
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(6),
-                    contentPadding = PaddingValues(start = 44.dp, end = 44.dp, bottom = 44.dp),
+                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                     modifier = Modifier.fillMaxSize()

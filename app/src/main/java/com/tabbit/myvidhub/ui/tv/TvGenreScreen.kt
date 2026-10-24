@@ -119,7 +119,7 @@ fun TvGenreScreen(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 44.dp, end = 44.dp, top = 28.dp),
+                .padding(start = 20.dp, end = 20.dp, top = 20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // 遥控器 Back 键统一由 TvApp.BackHandler 处理
@@ -151,7 +151,7 @@ fun TvGenreScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 18.dp, bottom = 8.dp),
-                contentPadding = PaddingValues(horizontal = 44.dp),
+                contentPadding = PaddingValues(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(chips, key = { "chip_${it.first}" }) { (label, k, g) ->
@@ -174,7 +174,7 @@ fun TvGenreScreen(
             else -> LazyVerticalGrid(
                 state = gridState,
                 columns = GridCells.Fixed(6),
-                contentPadding = PaddingValues(start = 44.dp, end = 44.dp, top = 14.dp, bottom = 44.dp),
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 32.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 modifier = Modifier.fillMaxSize()

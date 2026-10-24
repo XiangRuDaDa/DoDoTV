@@ -508,7 +508,7 @@ fun TvDetailScreen(
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .padding(start = 44.dp, end = 44.dp, bottom = 12.dp),
+                                .padding(start = 20.dp, end = 20.dp, bottom = 10.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             rowEps.forEach { ep ->

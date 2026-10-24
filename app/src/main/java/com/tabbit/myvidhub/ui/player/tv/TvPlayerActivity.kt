@@ -112,8 +112,15 @@ class TvPlayerActivity : ComponentActivity() {
     private var titleText by mutableStateOf("")
     private var trackOptions by mutableStateOf<List<TvTrack>>(emptyList())
 
+    /** PlayerView 引用：用于设置字幕样式 */
+    private var playerView: PlayerView? = null
+
     /** 字幕是否处于关闭态。自己记录而不是反查播放器，避免不同 Media3 小版本 API 差异 */
     private var textDisabled by mutableStateOf(false)
+
+    /** 字幕样式：背景透明度 / 字号，与手机端共用同一套偏好 */
+    private var subtitleBgAlpha by mutableStateOf(DEFAULT_SUBTITLE_BG_ALPHA)
+    private var subtitleTextSize by mutableStateOf(DEFAULT_SUBTITLE_TEXT_SIZE)
 
     /** 交互计数：每次按键 / 选项切换都 +1，用于重置 3 秒自动隐藏 */
     private var tick by mutableStateOf(0)
@@ -239,10 +246,43 @@ class TvPlayerActivity : ComponentActivity() {
                 out += TvTrack(label, group.type, group, i, group.isTrackSelected(i))
             }
         }
-        if (out.none { it.type == C.TRACK_TYPE_TEXT }) {
-            out += TvTrack("关闭字幕", C.TRACK_TYPE_TEXT, null, -1, textDisabled)
-        }
+        // 始终在字幕列表末尾放一个「关闭字幕」选项，
+        // 无论视频有没有字幕轨都能关掉。selected 由 textDisabled 决定。
+        out += TvTrack("关闭字幕", C.TRACK_TYPE_TEXT, null, -1, textDisabled)
         trackOptions = out
+    }
+
+    /** 应用字幕样式（背景透明度 + 字号），与手机端一致 */
+    private fun applySubtitleStyle() {
+        val sv = playerView?.subtitleView ?: return
+        val bg = android.graphics.Color.argb(
+            (subtitleBgAlpha.coerceIn(0f, 1f) * 255f).toInt(), 0, 0, 0
+        )
+        sv.setStyle(
+            androidx.media3.ui.CaptionStyleCompat(
+                android.graphics.Color.WHITE,
+                bg,
+                androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE,
+                bg,
+                android.graphics.Color.TRANSPARENT,
+                null
+            )
+        )
+        sv.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subtitleTextSize)
+    }
+
+    /** 上一集：当前集在列表中的前一个 */
+    private fun prevEpisode() {
+        val idx = episodes.indexOfFirst { it.id == current?.id }
+        if (idx > 0) switchEpisode(episodes[idx - 1])
+        else toast = "已经是第一集"
+    }
+
+    /** 下一集：当前集在列表中的后一个 */
+    private fun nextEpisode() {
+        val idx = episodes.indexOfFirst { it.id == current?.id }
+        if (idx >= 0 && idx < episodes.size - 1) switchEpisode(episodes[idx + 1])
+        else toast = "已经是最后一集"
     }
 
     private fun selectTrack(track: TvTrack) {
@@ -363,12 +403,9 @@ class TvPlayerActivity : ComponentActivity() {
             handler.post(progressTicker)
         }
 
-        // 3 秒自动隐藏：面板优先收起，其次收起进度层；暂停时不自动隐藏进度条
+        // 进度层 3 秒自动隐藏（面板不自动隐藏，由返回键 / 停止操作时关闭）
         LaunchedEffect(tick, panelTab, isPlaying) {
-            if (panelTab != null) {
-                delay(3_000L)
-                panelTab = null
-            } else if (overlayVisible && isPlaying && seekHint == null) {
+            if (panelTab == null && overlayVisible && isPlaying && seekHint == null) {
                 delay(3_000L)
                 overlayVisible = false
             }
@@ -396,6 +433,14 @@ class TvPlayerActivity : ComponentActivity() {
                 .onPreviewKeyEvent { ev ->
                     if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (ev.key.nativeKeyCode) {
+                        KeyEvent.KEYCODE_BACK -> {
+                            // 面板打开时按返回只关面板，不退出播放
+                            if (panelTab != null) {
+                                panelTab = null
+                                tick++
+                                true
+                            } else false
+                        }
                         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                             if (panelTab != null) return@onPreviewKeyEvent false // 交给选项自己处理
                             togglePlayPause()
@@ -445,6 +490,8 @@ class TvPlayerActivity : ComponentActivity() {
                         setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
                         setShutterBackgroundColor(android.graphics.Color.BLACK)
                         player = this@TvPlayerActivity.player
+                        this@TvPlayerActivity.playerView = this
+                        this@TvPlayerActivity.applySubtitleStyle()
                     }
                 },
                 update = { it.player = this@TvPlayerActivity.player }
@@ -478,10 +525,21 @@ class TvPlayerActivity : ComponentActivity() {
                     tracks = trackOptions,
                     episodes = episodes,
                     currentId = current?.id ?: 0L,
+                    subtitleBgAlpha = subtitleBgAlpha,
+                    subtitleTextSize = subtitleTextSize,
+                    hasEpisodes = episodes.isNotEmpty(),
                     onTabChange = { panelTab = it; tick++ },
                     onSpeed = { cycleSpeed(it); panelTab = null },
                     onTrack = { selectTrack(it); panelTab = null },
-                    onEpisode = { switchEpisode(it) }
+                    onEpisode = { switchEpisode(it) },
+                    onPrevEpisode = { prevEpisode() },
+                    onNextEpisode = { nextEpisode() },
+                    onSubtitleStyle = { bg, size ->
+                        subtitleBgAlpha = bg
+                        subtitleTextSize = size
+                        applySubtitleStyle()
+                        tick++
+                    }
                 )
             }
 
@@ -513,6 +571,8 @@ class TvPlayerActivity : ComponentActivity() {
 
     companion object {
         private const val EXTRA_MEDIA_ID = "media_id"
+        private const val DEFAULT_SUBTITLE_BG_ALPHA = 0.0f
+        private const val DEFAULT_SUBTITLE_TEXT_SIZE = 22f
 
         fun intent(context: android.content.Context, mediaId: Long) =
             android.content.Intent(context, TvPlayerActivity::class.java)
@@ -527,6 +587,7 @@ class TvPlayerActivity : ComponentActivity() {
 internal enum class TvPanelTab(val label: String) {
     SPEED("倍速"),
     SUBTITLE("字幕"),
+    SUBTITLE_STYLE("字幕样式"),
     AUDIO("音轨"),
     EPISODE("选集")
 }
@@ -611,10 +672,16 @@ private fun TvFunctionPanel(
     tracks: List<TvTrack>,
     episodes: List<MediaEntity>,
     currentId: Long,
+    subtitleBgAlpha: Float,
+    subtitleTextSize: Float,
+    hasEpisodes: Boolean,
     onTabChange: (TvPanelTab) -> Unit,
     onSpeed: (Float) -> Unit,
     onTrack: (TvTrack) -> Unit,
-    onEpisode: (MediaEntity) -> Unit
+    onEpisode: (MediaEntity) -> Unit,
+    onPrevEpisode: () -> Unit,
+    onNextEpisode: () -> Unit,
+    onSubtitleStyle: (bgAlpha: Float, textSize: Float) -> Unit
 ) {
     val tabFocus = remember { FocusRequester() }
     LaunchedEffect(tab) { runCatching { tabFocus.requestFocus() } }
@@ -632,6 +699,14 @@ private fun TvFunctionPanel(
             .padding(start = 56.dp, end = 56.dp, top = 46.dp, bottom = 30.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // 第一行：上一集 / 下一集（操作按钮，放在倍速前面）
+        if (hasEpisodes) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TvChip(text = "上一集", selected = false, onClick = onPrevEpisode)
+                TvChip(text = "下一集", selected = false, onClick = onNextEpisode)
+            }
+        }
+
         // 一级标签
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             TvPanelTab.entries.forEach { t ->
@@ -645,18 +720,20 @@ private fun TvFunctionPanel(
             }
         }
 
-        // 二级选项
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        // 二级选项（Column，字幕样式需要两行）
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             when (tab) {
-                TvPanelTab.SPEED -> TvPlayerActivity.SPEEDS.forEach { v ->
-                    TvChip(
-                        text = fmtSpeed(v),
-                        selected = kotlin.math.abs(v - speed) < 0.01f,
-                        onClick = { onSpeed(v) }
-                    )
+                TvPanelTab.SPEED -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TvPlayerActivity.SPEEDS.forEach { v ->
+                        TvChip(
+                            text = fmtSpeed(v),
+                            selected = kotlin.math.abs(v - speed) < 0.01f,
+                            onClick = { onSpeed(v) }
+                        )
+                    }
                 }
 
-                TvPanelTab.SUBTITLE -> {
+                TvPanelTab.SUBTITLE -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     val texts = tracks.filter { it.type == C.TRACK_TYPE_TEXT }
                     if (texts.isEmpty()) {
                         TvHint("该视频没有内嵌字幕")
@@ -671,7 +748,34 @@ private fun TvFunctionPanel(
                     }
                 }
 
-                TvPanelTab.AUDIO -> {
+                TvPanelTab.SUBTITLE_STYLE -> {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("字号", color = Color.White.copy(alpha = 0.6f),
+                            style = MaterialTheme.typography.labelMedium)
+                        listOf(18f, 20f, 22f, 26f, 30f, 36f).forEach { s ->
+                            TvChip(
+                                text = "${s.toInt()}号",
+                                selected = kotlin.math.abs(s - subtitleTextSize) < 0.01f,
+                                onClick = { onSubtitleStyle(subtitleBgAlpha, s) }
+                            )
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("背景", color = Color.White.copy(alpha = 0.6f),
+                            style = MaterialTheme.typography.labelMedium)
+                        listOf(0f, 0.25f, 0.5f, 0.75f, 1f).forEach { a ->
+                            TvChip(
+                                text = "${(a * 100).toInt()}%",
+                                selected = kotlin.math.abs(a - subtitleBgAlpha) < 0.01f,
+                                onClick = { onSubtitleStyle(a, subtitleTextSize) }
+                            )
+                        }
+                    }
+                }
+
+                TvPanelTab.AUDIO -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     val audios = tracks.filter { it.type == C.TRACK_TYPE_AUDIO }
                     if (audios.isEmpty()) {
                         TvHint("该视频只有一条音轨")
@@ -686,7 +790,7 @@ private fun TvFunctionPanel(
                     }
                 }
 
-                TvPanelTab.EPISODE -> {
+                TvPanelTab.EPISODE -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (episodes.isEmpty()) {
                         TvHint("当前不是剧集，没有可选分集")
                     } else {
