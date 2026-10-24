@@ -239,6 +239,11 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { repo.setFavorite(mediaId, favorite) }
     }
 
+    /** 从头播放：重置进度后再进入播放器，就会从 0s 开始 */
+    fun resetPosition(mediaId: Long) {
+        viewModelScope.launch { repo.resetPosition(mediaId) }
+    }
+
     suspend fun searchMedia(keyword: String): List<MediaEntity> =
         if (keyword.isBlank()) emptyList() else repo.search(keyword)
 

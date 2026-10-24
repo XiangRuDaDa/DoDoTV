@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -55,9 +56,13 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
 import com.tabbit.myvidhub.core.Prefs
 import com.tabbit.myvidhub.data.scrape.ScrapeEngine
 import com.tabbit.myvidhub.data.scrape.ScrapeStrategy
@@ -101,8 +106,11 @@ fun TvDetailScreen(
     var loading by remember { mutableStateOf(true) }
 
     /** 分季 + 分页：几百集的剧直接一屏铺满很难找，先按季过滤再按页翻 */
-    var selectedSeason by remember { mutableStateOf(0) }
-    var epPage by remember { mutableStateOf(0) }
+    var selectedSeason by remember(mediaId) { mutableStateOf(0) }
+    var epPage by remember(mediaId) { mutableStateOf(0) }
+
+    /** 进页后遥控器焦点直接落在「播放」按钮上，不用先按一堆方向键 */
+    val playFocusRequester = remember { FocusRequester() }
 
     // 首帧就用「上次算好的主色 / 内存缓存 / 标题哈希色」，避免进入瞬间一片黑
     // 同手机端：mediaOf() 是 suspend，组合期不能调，改从已订阅的 library 同步取，
@@ -193,6 +201,14 @@ fun TvDetailScreen(
         dominant = color
     }
 
+    // 加载完成后把焦点落到「播放」按钮上，进页即可直接按 OK 播放
+    LaunchedEffect(media, loading) {
+        if (!loading && media != null) {
+            kotlinx.coroutines.delay(120)
+            runCatching { playFocusRequester.requestFocus() }
+        }
+    }
+
     val item = media
 
     // ---------- 分集：按季过滤 + 按页切块 ----------
@@ -241,57 +257,55 @@ fun TvDetailScreen(
     val backdrop = tmdb?.backdropUrl.orEmpty().ifBlank {
         item?.let { it.backdropUrl.ifBlank { it.posterUrl } }.orEmpty()
     }
+    val logo = item?.logoUrl.orEmpty().ifBlank { tmdb?.logoUrl.orEmpty() }
 
     Box(
         Modifier
             .fillMaxSize()
             .background(bgBrush)
     ) {
-        // 顶部横版图作为页面头图，向下溶解到填充色
+        // 背景横版图铺满整个页面，向下溶解到主色填充。
+        // 与手机端一致：图像 → 主色 的长距离过渡，保留我们自己的取色风格，
+        // 而不是截图那种纯图像底，保证整站视觉统一。
         if (backdrop.isNotBlank()) {
+            AsyncImage(
+                model = backdrop,
+                contentDescription = item?.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            // 纵向：顶部 30% 黑 → 中段透明 → 底部完全收进主色
             Box(
                 Modifier
-                    .fillMaxWidth()
-                    .height(400.dp)
-            ) {
-                AsyncImage(
-                    model = backdrop,
-                    contentDescription = item?.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(headerScrim)
-                )
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.horizontalGradient(
-                                0f to Color.Black.copy(alpha = 0.55f),
-                                0.6f to Color.Transparent
-                            )
+                    .fillMaxSize()
+                    .background(headerScrim)
+            )
+            // 横向左侧加深：文字都堆在左半屏，需要更厚的暗层保证可读性
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.horizontalGradient(
+                            0f to Color.Black.copy(alpha = 0.62f),
+                            0.45f to Color.Black.copy(alpha = 0.30f),
+                            0.75f to Color.Transparent
                         )
-                )
-            }
+                    )
+            )
         }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 44.dp)
+            contentPadding = PaddingValues(bottom = 60.dp)
         ) {
+            // 顶部留白：让 Logo 压在背景图上，而不是顶到屏幕边
             item {
-                Box(Modifier.fillMaxWidth().height(if (backdrop.isBlank()) 44.dp else 250.dp))
+                Spacer(Modifier.height(72.dp))
             }
 
-            // ---------- 左侧海报 + 右侧信息 ----------
+            // ---------- 标题区：艺术字 Logo 优先，文字标题兜底 ----------
             item {
                 if (item == null) {
-                    // 注意：这里在 LazyColumn 的 item 内，高度约束是无限的。
-                    // 若让 TvEmptyState 用 fillMaxSize，会抛
-                    // "Can't represent a size of 2147483647 in Constraints" 导致进页即闪退。
                     val boxMod = Modifier.fillMaxWidth().height(420.dp)
                     if (loading) {
                         TvEmptyState("加载中…", modifier = boxMod)
@@ -299,26 +313,22 @@ fun TvDetailScreen(
                         TvEmptyState("找不到该内容", modifier = boxMod)
                     }
                 } else {
-                    Row(
+                    Column(
                         Modifier
                             .fillMaxWidth()
-                            .padding(start = 44.dp, end = 44.dp),
-                        horizontalArrangement = Arrangement.spacedBy(28.dp)
+                            .padding(start = 56.dp, end = 56.dp)
                     ) {
-                        AsyncImage(
-                            // 刮削结果优先：TMDB 的海报质量和尺寸都远好于本地抓的
-                            model = tmdb?.posterUrl.orEmpty().ifBlank {
-                                item.posterUrl.ifBlank { item.backdropUrl }
-                            },
-                            contentDescription = item.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .width(220.dp)
-                                .height(330.dp)
-                                .background(AppColors.Surface)
-                        )
-
-                        Column(Modifier.weight(1f)) {
+                        // 标题：TMDB 艺术字 Logo（同手机端做法），没有就用大字号文字
+                        if (logo.isNotBlank()) {
+                            AsyncImage(
+                                model = logo,
+                                contentDescription = item.title,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .height(110.dp)
+                                    .widthIn(max = 520.dp)
+                            )
+                        } else {
                             Text(
                                 item.title,
                                 color = Color.White,
@@ -327,73 +337,112 @@ fun TvDetailScreen(
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(Modifier.height(10.dp))
-                            TvMetaRow(item)
+                        }
 
-                            // 第三行：格式徽章（TMDB 图标 + Emby 解析到的 分辨率/HDR/Codec）
-                            FormatBadgesRow(
-                                tmdbEnabled = tmdb != null,
-                                resolution = scraped?.videoResolution.orEmpty(),
-                                hdr = scraped?.hdrType.orEmpty(),
-                                codec = scraped?.videoCodec.orEmpty()
+                        // 操作按钮行：播放（带集号） + 从头开始（仅看过后出现） + 收藏
+                        // 参考截图的三按钮结构，但保留我们自己的胶囊按钮样式
+                        Spacer(Modifier.height(22.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            // 主按钮：剧集带具体集号，电影就是「立即播放」
+                            TvPlayButton(
+                                text = run {
+                                    if (item.kind == MediaKind.SERIES && item.episode > 0) {
+                                        if (item.positionMs > 5_000L) "继续观看 S${item.season}E${item.episode}"
+                                        else "开始观看 S${item.season}E${item.episode}"
+                                    } else {
+                                        if (item.positionMs > 5_000L) "继续播放" else "立即播放"
+                                    }
+                                },
+                                modifier = Modifier.focusRequester(playFocusRequester),
+                                onClick = { onPlay(item.id) }
                             )
-                            Spacer(Modifier.height(16.dp))
-
-                            // 优先用刮削文案，其次回落本地记录
-                            // TMDB 简介是完整剧情，比本地 tagline 信息量大得多
-                            val overview = tmdb?.overview?.takeIf { it.isNotBlank() }
-                                ?: scraped?.tagline?.takeIf { it.isNotBlank() }
-                                ?: item.overview
-                            if (overview.isNotBlank()) {
-                                Text(
-                                    overview,
-                                    color = Color.White.copy(alpha = 0.78f),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    maxLines = 5,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(Modifier.height(14.dp))
-                            }
-
-                            val directors = (tmdb?.directors?.takeIf { it.isNotEmpty() }?.map { it.name }
-                                ?: scraped?.directors?.map { it.name })
-                                ?.joinToString(" / ").orEmpty()
-                            if (directors.isNotBlank()) {
-                                TvInfoLine("导演", directors)
-                            }
-                            val actors = (tmdb?.actors?.takeIf { it.isNotEmpty() }?.map { it.name }
-                                ?: scraped?.actors?.map { it.name })
-                                ?.take(6)?.joinToString(" / ").orEmpty()
-                            if (actors.isNotBlank()) {
-                                TvInfoLine("主演", actors)
-                            }
-                            val studios = scraped?.studios?.joinToString(" / ").orEmpty()
-                            if (studios.isNotBlank()) {
-                                TvInfoLine("制片", studios)
-                            }
-                            if (item.genres.isNotBlank()) {
-                                TvInfoLine("类型", item.genres)
-                            }
-
-                            Spacer(Modifier.height(22.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            if (item.positionMs > 5_000L) {
                                 TvPillButton(
-                                    text = if (item.positionMs > 5_000L) "继续播放" else "立即播放",
-                                    primary = true,
-                                    onClick = { onPlay(item.id) }
-                                )
-                                TvPillButton(
-                                    text = if (item.favorite) "已收藏" else "收藏",
+                                    text = "从头开始",
                                     primary = false,
-                                    onClick = { vm.toggleFavorite(item.id, !item.favorite) }
+                                    onClick = {
+                                        vm.resetPosition(item.id)
+                                        onPlay(item.id)
+                                    }
                                 )
                             }
+                            TvPillButton(
+                                text = if (item.favorite) "已收藏" else "收藏",
+                                primary = false,
+                                onClick = { vm.toggleFavorite(item.id, !item.favorite) }
+                            )
+                        }
 
-                            // 用了 TMDB 数据就必须署名（其使用条款要求）
-                            if (tmdb != null) {
-                                Spacer(Modifier.height(18.dp))
-                                TmdbCreditLine()
+                        // 简介段落（直接铺开，不加标题）
+                        val overview = tmdb?.overview?.takeIf { it.isNotBlank() }
+                            ?: scraped?.tagline?.takeIf { it.isNotBlank() }
+                            ?: item.overview
+                        if (overview.isNotBlank()) {
+                            Spacer(Modifier.height(22.dp))
+                            Text(
+                                overview,
+                                color = Color.White.copy(alpha = 0.82f),
+                                style = MaterialTheme.typography.bodyLarge,
+                                maxLines = 5,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        // 元信息行：年份 · 类型 · 时长 · 剧集 + TMDB 评分徽章
+                        Spacer(Modifier.height(18.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TvMetaRow(item)
+                            // TMDB 评分白徽章：和截图的「TMDB 5.2」一致
+                            val rating = (if (item.rating > 0) item.rating else tmdb?.rating ?: 0.0)
+                            if (rating > 0.0 && tmdb != null) {
+                                Spacer(Modifier.width(12.dp))
+                                Box(
+                                    Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color.White)
+                                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        "TMDB ${String.format("%.1f", rating)}",
+                                        color = Color.Black,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
+                        }
+
+                        // 格式徽章：保留我们自己的风格（TMDB 图标 + 分辨率/HDR/Codec）
+                        Spacer(Modifier.height(12.dp))
+                        FormatBadgesRow(
+                            tmdbEnabled = tmdb != null,
+                            resolution = scraped?.videoResolution.orEmpty(),
+                            hdr = scraped?.hdrType.orEmpty(),
+                            codec = scraped?.videoCodec.orEmpty()
+                        )
+
+                        // 导演 / 主演 / 类型（保留我们的信息密度）
+                        val directors = (tmdb?.directors?.takeIf { it.isNotEmpty() }?.map { it.name }
+                            ?: scraped?.directors?.map { it.name })
+                            ?.joinToString(" / ").orEmpty()
+                        if (directors.isNotBlank()) {
+                            Spacer(Modifier.height(10.dp))
+                            TvInfoLine("导演", directors)
+                        }
+                        val actors = (tmdb?.actors?.takeIf { it.isNotEmpty() }?.map { it.name }
+                            ?: scraped?.actors?.map { it.name })
+                            ?.take(8)?.joinToString(" / ").orEmpty()
+                        if (actors.isNotBlank()) {
+                            TvInfoLine("主演", actors)
+                        }
+                        if (item.genres.isNotBlank()) {
+                            TvInfoLine("类型", item.genres)
+                        }
+
+                        // TMDB 署名（使用条款要求）
+                        if (tmdb != null) {
+                            Spacer(Modifier.height(18.dp))
+                            TmdbCreditLine()
                         }
                     }
                 }
@@ -442,6 +491,12 @@ fun TvDetailScreen(
                                     primary = false,
                                     onClick = { if (pageIndex < totalPages - 1) epPage = pageIndex + 1 }
                                 )
+                                // 末集直达：几百集的剧不用一路翻到底，参考截图的「末集」
+                                TvPillButton(
+                                    text = "末集",
+                                    primary = false,
+                                    onClick = { epPage = totalPages - 1 }
+                                )
                             }
                         }
                     }
@@ -463,12 +518,20 @@ fun TvDetailScreen(
                                     onClick = { onPlay(ep.id) }
                                 )
                             }
-                            // 最后一行不满时补空位，避免卡片被拉伸成超宽
                             repeat(TV_GRID_COLS - rowEps.size) {
                                 Spacer(Modifier.weight(1f))
                             }
                         }
                     }
+                }
+            } else if (!loading && item != null && item.kind == MediaKind.SERIES) {
+                // 剧集但分集为空：加载失败时给用户一个明确提示，而不是一块空白
+                item {
+                    TvEmptyState(
+                        "暂无分集信息",
+                        hint = "数据源可能未返回剧集列表，请稍后重试",
+                        modifier = Modifier.fillMaxWidth().height(160.dp)
+                    )
                 }
             }
         }

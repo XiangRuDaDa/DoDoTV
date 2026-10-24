@@ -39,6 +39,9 @@ class MediaRepository(private val context: Context) {
     suspend fun search(keyword: String): List<MediaEntity> = mediaDao.search(keyword)
     suspend fun setFavorite(id: Long, favorite: Boolean) = mediaDao.setFavorite(id, favorite)
 
+    /** 从头播放：把进度归零，播放器读取后就从 0s 开始 */
+    suspend fun resetPosition(id: Long) = mediaDao.saveProgress(id, 0L, 0L)
+
     suspend fun addSource(source: SourceEntity): Long = sourceDao.insert(source)
     suspend fun getSource(id: Long): SourceEntity? = sourceDao.get(id)
     suspend fun allSources(): List<SourceEntity> = sourceDao.getAll()
