@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
@@ -278,14 +279,12 @@ class PhonePlayerActivity : ComponentActivity() {
             if (episodeList.isNotEmpty()) showEpisodeDialog = true
         }
 
-        // 底部栏首位：播放暂停 / 快退 / 快进
+        // 底部栏首位：播放暂停（快退/快进已移到左右滑动手势）
         playPauseView?.setOnClickListener {
             val p = player ?: return@setOnClickListener
             if (p.isPlaying) p.pause() else p.play()
             updatePlayPauseLabel()
         }
-        view.findViewById<View>(R.id.doudou_rew).setOnClickListener { seekBy(-10_000L) }
-        view.findViewById<View>(R.id.doudou_ffwd).setOnClickListener { seekBy(10_000L) }
 
         // 遥控器：控制条显示后不要过快自动隐藏，方便选择上下集
         view.controllerShowTimeoutMs = 5_000
@@ -298,15 +297,27 @@ class PhonePlayerActivity : ComponentActivity() {
         playPauseView?.text = if (p.isPlaying) "暂停" else "播放"
     }
 
-    /** 左右滑动快进/快退 + 双击暂停 */
+    /**
+     * 手势分发：
+     *   · 横向滑动 → 快进/快退（滑过整屏 ≈ 1.5 倍时长）
+     *   · 左半屏上下滑 → 音量
+     *   · 右半屏上下滑 → 亮度
+     *   · 双击 → 播放/暂停（不弹出控制条）
+     */
     private fun setupTouchSeek(view: PlayerView) {
         val slop = ViewConfiguration.get(this).scaledTouchSlop
         val doubleTapMs = ViewConfiguration.getDoubleTapTimeout()
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+        // 手势类型：用 Int 常量而不是 enum（enum 不能定义在函数内部）
+        val G_NONE = 0; val G_SEEK = 1; val G_VOLUME = 2; val G_BRIGHTNESS = 3
+        var gesture = G_NONE
         var downX = 0f
         var downY = 0f
         var startPos = 0L
         var targetPos = 0L
-        var seeking = false
+        var startVolume = 0
+        var startBrightness = 0.5f
         var lastTapMs = 0L
 
         view.setOnTouchListener { v, event ->
@@ -317,48 +328,80 @@ class PhonePlayerActivity : ComponentActivity() {
                     downY = event.y
                     startPos = p.currentPosition
                     targetPos = startPos
-                    seeking = false
-                    // 双击暂停：两次 ACTION_DOWN 间隔 < doubleTapTimeout → 切换播放状态
+                    gesture = G_NONE
+
+                    // 起始音量 / 亮度快照，滑动时以它为基准增量
+                    startVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                    startBrightness = window.attributes.screenBrightness.takeIf { it > 0f } ?: 0.5f
+
+                    // 双击暂停：两次 DOWN 间隔 < doubleTapTimeout → 切换播放
                     val now = System.currentTimeMillis()
                     if (now - lastTapMs < doubleTapMs) {
                         if (p.isPlaying) p.pause() else p.play()
                         updatePlayPauseLabel()
-                        lastTapMs = 0L  // 重置避免三连击触发两次
+                        // 消费掉这次 DOWN，并隐藏控制条，避免双击时弹出进度条/功能栏
+                        playerView?.hideController()
+                        lastTapMs = 0L
+                        true
                     } else {
                         lastTapMs = now
+                        false
                     }
-                    false
                 }
 
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.x - downX
                     val dy = event.y - downY
-                    val duration = p.duration
-                    if (!seeking &&
-                        abs(dx) > slop && abs(dx) > abs(dy) * 1.4f && duration > 0
-                    ) {
-                        seeking = true
+                    if (gesture == G_NONE) {
+                        val adx = abs(dx)
+                        val ady = abs(dy)
+                        if (adx <= slop && ady <= slop) return@setOnTouchListener false
+                        gesture = when {
+                            adx > ady * 1.4f -> G_SEEK
+                            else -> if (downX < v.width / 2f) G_VOLUME else G_BRIGHTNESS
+                        }
                     }
-                    if (seeking) {
-                        // 滑过整个屏幕宽度 ≈ 视频总时长的 1.5 倍
-                        val span = (duration * 1.5f * (dx / v.width.coerceAtLeast(1)))
-                        targetPos = (startPos + span.toLong()).coerceIn(0L, duration)
-                        showSeekPreview("${fmtTime(targetPos)} / ${fmtTime(duration)}")
-                        true
-                    } else {
-                        false
+                    when (gesture) {
+                        G_SEEK -> {
+                            val duration = p.duration
+                            if (duration <= 0) return@setOnTouchListener false
+                            val span = duration * 1.5f * (dx / v.width.coerceAtLeast(1))
+                            targetPos = (startPos + span.toLong()).coerceIn(0L, duration)
+                            showSeekPreview("${fmtTime(targetPos)} / ${fmtTime(duration)}")
+                        }
+                        G_VOLUME -> {
+                            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                            // 上滑增大：屏幕高度对应 1.5 倍满量程，避免滑到底才到 0
+                            val delta = (-dy / v.height.coerceAtLeast(1)) * max * 1.5f
+                            val vol = (startVolume + delta).toInt().coerceIn(0, max)
+                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, vol, 0)
+                            showSeekPreview("音量 ${vol * 100 / max.coerceAtLeast(1)}%")
+                        }
+                        G_BRIGHTNESS -> {
+                            // 上滑增大：屏幕高度对应满量程
+                            val delta = (-dy / v.height.coerceAtLeast(1))
+                            val b = (startBrightness + delta).coerceIn(0.01f, 1f)
+                            window.attributes = window.attributes.apply { screenBrightness = b }
+                            showSeekPreview("亮度 ${(b * 100).toInt()}%")
+                        }
+                        G_NONE -> {}
                     }
+                    true
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (seeking) {
-                        p.seekTo(targetPos)
-                        showSeekPreview("${fmtTime(targetPos)} / ${fmtTime(p.duration)}")
-                        seeking = false
-                        true
-                    } else {
-                        false
+                    when (gesture) {
+                        G_SEEK -> {
+                            p.seekTo(targetPos)
+                            showSeekPreview("${fmtTime(targetPos)} / ${fmtTime(p.duration)}")
+                        }
+                        G_VOLUME, G_BRIGHTNESS -> {
+                            // 提示由 showSeekPreview 的延迟自动消失
+                        }
+                        G_NONE -> {}
                     }
+                    gesture = G_NONE
+                    true
                 }
 
                 else -> false
@@ -698,6 +741,8 @@ class PhonePlayerActivity : ComponentActivity() {
         playerView?.player = null
         player?.release()
         player = null
+        // 退出播放即清掉磁盘缓存，避免旧视频断网仍可播放、长期占用存储空间
+        PlayerFactory.clearCache(this)
         super.onDestroy()
     }
 

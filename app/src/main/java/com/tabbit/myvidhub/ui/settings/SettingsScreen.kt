@@ -202,6 +202,11 @@ fun SettingsScreen(vm: LibraryViewModel) {
                         onValueChange = {
                             tmdbToken = it
                             Prefs.tmdbReadToken = it
+                            // 填了令牌就自动打开总开关，避免「密钥填了但刮削没生效」的困惑
+                            if (it.isNotBlank() && !tmdbOn) {
+                                tmdbOn = true
+                                Prefs.tmdbEnabled = true
+                            }
                             engineTick++
                         },
                         modifier = Modifier.fillMaxWidth(),

@@ -318,6 +318,8 @@ class TvPlayerActivity : ComponentActivity() {
         saveProgress(force = true)
         player?.release()
         player = null
+        // 退出播放即清掉磁盘缓存，避免旧视频断网仍可播放、长期占用存储空间
+        PlayerFactory.clearCache(this)
         super.onDestroy()
     }
 

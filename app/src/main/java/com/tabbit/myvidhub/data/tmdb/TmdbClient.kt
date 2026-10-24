@@ -83,8 +83,15 @@ class TmdbClient(
             val id = searchId(title, year, kind) ?: return@withContext null
             val isMovie = kind != "SERIES"
             val detailPath = if (isMovie) "/movie/$id" else "/tv/$id"
-            val detail = get(detailPath, mapOf("append_to_response" to "images,credits"))
-                ?: return@withContext null
+            // include_image_language 必须显式声明：TMDB 的 images 子对象默认只返回
+            // 与 language 匹配的语种 + null，大多数影片只有英文 logo，
+            // 不带这个参数 logos 数组会是空的 → 详情页永远只显示文字标题。
+            val detail = get(
+                detailPath, mapOf(
+                    "append_to_response" to "images,credits",
+                    "include_image_language" to "en,zh,null"
+                )
+            ) ?: return@withContext null
 
             val images = detail.optJSONObject("images")
             val logoPath = pickLogo(images?.optJSONArray("logos"))

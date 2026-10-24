@@ -170,16 +170,6 @@
                     android:text="暂停" />
 
                 <TextView
-                    android:id="@+id/doudou_rew"
-                    style="@style/PlayerPill"
-                    android:text="快退10s" />
-
-                <TextView
-                    android:id="@+id/doudou_ffwd"
-                    style="@style/PlayerPill"
-                    android:text="快进10s" />
-
-                <TextView
                     android:id="@+id/doudou_prev_episode"
                     style="@style/PlayerPill"
                     android:text="上一集" />
