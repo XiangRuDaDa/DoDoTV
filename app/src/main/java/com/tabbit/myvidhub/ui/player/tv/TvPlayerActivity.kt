@@ -230,7 +230,8 @@ class TvPlayerActivity : ComponentActivity() {
 
     private fun refreshTracks() {
         val p = player ?: return
-        val out = mutableListOf<TvTrack>()
+        val audios = mutableListOf<TvTrack>()
+        val texts = mutableListOf<TvTrack>()
 
         for (group in p.currentTracks.groups) {
             if (group.type != C.TRACK_TYPE_AUDIO && group.type != C.TRACK_TYPE_TEXT) continue
@@ -243,13 +244,14 @@ class TvPlayerActivity : ComponentActivity() {
                     }
                     else -> format.label ?: format.language ?: "字幕 ${i + 1}"
                 }
-                out += TvTrack(label, group.type, group, i, group.isTrackSelected(i))
+                val track = TvTrack(label, group.type, group, i, group.isTrackSelected(i))
+                if (group.type == C.TRACK_TYPE_AUDIO) audios += track else texts += track
             }
         }
-        // 始终在字幕列表末尾放一个「关闭字幕」选项，
-        // 无论视频有没有字幕轨都能关掉。selected 由 textDisabled 决定。
-        out += TvTrack("关闭字幕", C.TRACK_TYPE_TEXT, null, -1, textDisabled)
-        trackOptions = out
+        // 「关闭字幕」放在字幕列表第一位，后面依次跟所有字幕轨，
+        // 用户可直接在同一行切换：关闭 → 字幕1 → 字幕2 …
+        val textTracks = listOf(TvTrack("关闭字幕", C.TRACK_TYPE_TEXT, null, -1, textDisabled)) + texts
+        trackOptions = audios + textTracks
     }
 
     /** 应用字幕样式（背景透明度 + 字号），与手机端一致 */
@@ -345,7 +347,25 @@ class TvPlayerActivity : ComponentActivity() {
             }
             return super.onKeyDown(keyCode, event)
         }
-        return super.onKeyDown(keyCode, event)
+        // 面板关闭时直接在 Activity 层处理，不依赖 Compose 焦点
+        // —— 否则首次按键可能被 PlayerView 吃掉，需要按两次才能唤起面板
+        return when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                panelTab = TvPanelTab.SPEED
+                overlayVisible = false
+                tick++
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { seekBy(-10_000L); true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { seekBy(10_000L); true }
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            KeyEvent.KEYCODE_ENTER,
+            KeyEvent.KEYCODE_NUMPAD_ENTER -> { togglePlayPause(); true }
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { togglePlayPause(); true }
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekBy(30_000L); true }
+            KeyEvent.KEYCODE_MEDIA_REWIND -> { seekBy(-10_000L); true }
+            else -> super.onKeyDown(keyCode, event)
+        }
     }
 
     override fun onPause() {
@@ -430,54 +450,6 @@ class TvPlayerActivity : ComponentActivity() {
                 .fillMaxSize()
                 .background(Color.Black)
                 .focusRequester(rootFocus)
-                .onPreviewKeyEvent { ev ->
-                    if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    when (ev.key.nativeKeyCode) {
-                        KeyEvent.KEYCODE_BACK -> {
-                            // 面板打开时按返回只关面板，不退出播放
-                            if (panelTab != null) {
-                                panelTab = null
-                                tick++
-                                true
-                            } else false
-                        }
-                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                            if (panelTab != null) return@onPreviewKeyEvent false // 交给选项自己处理
-                            togglePlayPause()
-                            true
-                        }
-                        KeyEvent.KEYCODE_DPAD_DOWN -> {
-                            if (panelTab != null) return@onPreviewKeyEvent false
-                            panelTab = TvPanelTab.SPEED
-                            overlayVisible = false
-                            tick++
-                            true
-                        }
-                        KeyEvent.KEYCODE_DPAD_LEFT -> {
-                            if (panelTab != null) return@onPreviewKeyEvent false
-                            seekBy(-10_000L)
-                            true
-                        }
-                        KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                            if (panelTab != null) return@onPreviewKeyEvent false
-                            seekBy(10_000L)
-                            true
-                        }
-                        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                            togglePlayPause()
-                            true
-                        }
-                        KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                            seekBy(30_000L)
-                            true
-                        }
-                        KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                            seekBy(-10_000L)
-                            true
-                        }
-                        else -> false
-                    }
-                }
                 .focusable()
         ) {
             AndroidView(
@@ -485,6 +457,9 @@ class TvPlayerActivity : ComponentActivity() {
                 factory = { c ->
                     PlayerView(c).apply {
                         useController = false
+                        // 不让 PlayerView 抢占焦点，避免首次下键被原生 View 吃掉
+                        isFocusable = false
+                        isFocusableInTouchMode = false
                         // 电视端固定 16:9 适应，不提供比例切换
                         resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                         setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
@@ -585,11 +560,11 @@ class TvPlayerActivity : ComponentActivity() {
 // ---------- 面板数据 ----------
 
 internal enum class TvPanelTab(val label: String) {
+    EPISODE("选集"),
     SPEED("倍速"),
     SUBTITLE("字幕"),
     SUBTITLE_STYLE("字幕样式"),
-    AUDIO("音轨"),
-    EPISODE("选集")
+    AUDIO("音轨")
 }
 
 internal data class TvTrack(
@@ -699,16 +674,12 @@ private fun TvFunctionPanel(
             .padding(start = 56.dp, end = 56.dp, top = 46.dp, bottom = 30.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 第一行：上一集 / 下一集（操作按钮，放在倍速前面）
-        if (hasEpisodes) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        // 第一行：上一集 / 下一集 + 一级标签（倍速、字幕…），统一在同一行
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (hasEpisodes) {
                 TvChip(text = "上一集", selected = false, onClick = onPrevEpisode)
                 TvChip(text = "下一集", selected = false, onClick = onNextEpisode)
             }
-        }
-
-        // 一级标签
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             TvPanelTab.entries.forEach { t ->
                 val selected = t == tab
                 TvChip(
