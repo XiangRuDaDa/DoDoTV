@@ -65,8 +65,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
 import com.tabbit.myvidhub.core.Prefs
 import com.tabbit.myvidhub.data.scrape.ScrapeEngine
 import com.tabbit.myvidhub.data.scrape.ScrapeStrategy
