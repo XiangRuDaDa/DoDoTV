@@ -269,37 +269,50 @@ fun DetailScreen(
         label = "page_bottom"
     )
 
-    // 整页填充色：顶部 0~headerRatio 全是主色（和海报覆盖区域对齐），headerRatio 之后才往深色渐变。
-    // 渐变分成两段：headerRatio → midColor（柔和过渡），midColor → animatedBottom（快速压暗），
-    // 两段都要足够长，让「海报底部的主色」和「页面深处的深色」之间看不到明显的折点。
+    // 整页填充色：顶部 0~headerRatio 基本是主色，headerRatio 之后往深色渐变。
+    // 关键：r 之后先保留一段纯 seamColor 缓冲带（r ~ r+0.06），再开始缓降。
+    // 这样海报底部（headerScrim 已不透明）和页面背景有一段同色重叠区，
+    // 哪怕有 1~2px 的渲染偏差，也落在纯色区内，肉眼绝对看不到交界线。
     val bgBrush = remember(animatedTop, animatedBottom, headerRatio) {
         val r = headerRatio
-        // 过渡覆盖 headerRatio ~ 1f 的整个后半段，中点设在 75% 处让前半更慢、后半更快
-        val mid = r + (1f - r) * 0.55f
-        val midColor = lerp(animatedTop, animatedBottom, 0.5f)
-        val quarter = r + (1f - r) * 0.30f
-        val quarterColor = lerp(animatedTop, animatedBottom, 0.25f)
+        val seam = lerp(animatedTop, animatedBottom, 0.08f)
+        val early = r * 0.86f
+        val earlyColor = lerp(animatedTop, animatedBottom, 0.04f)
+        // 缓冲带终点：r 之后 6% 仍保持纯 seamColor
+        val bufferEnd = r + (1f - r) * 0.06f
+        val p1 = r + (1f - r) * 0.26f
+        val p1Color = lerp(animatedTop, animatedBottom, 0.18f)
+        val p2 = r + (1f - r) * 0.50f
+        val p2Color = lerp(animatedTop, animatedBottom, 0.38f)
+        val p3 = r + (1f - r) * 0.75f
+        val p3Color = lerp(animatedTop, animatedBottom, 0.60f)
         Brush.verticalGradient(
             0f to animatedTop,
-            r to animatedTop,              // 海报覆盖区 = 纯主色，与 headerScrim 终点无缝
-            quarter to quarterColor,
-            mid to midColor,
+            early to earlyColor,
+            r to seam,
+            bufferEnd to seam,              // 缓冲带：与 headerScrim 底部重叠的纯色区
+            p1 to p1Color,
+            p2 to p2Color,
+            p3 to p3Color,
             1f to animatedBottom
         )
     }
 
-    // 封面 → 填充色的渐变过渡：头图下方 45% 区间由封面逐渐溶解成整页填充色，两者之间没有硬边
-    // 头部遮罩：顶部压暗保证返回键可读 → 中段完全透明露出海报 → 底部主色逐渐加浓到不透明。
-    // 「颜色」和「透明度」同时插值，所以海报到页面背景是一条连续过渡，看不到硬边或色带。
-    val headerScrim = remember(animatedTop) {
+    // 封面 → 填充色的渐变过渡。
+    // 策略：alpha 在 0.78 处就到 1.0，海报底部 22% 区域是纯 seamColor，
+    // 与 bgBrush 在 r~r+0.06 的缓冲带重叠。两层同色区域有交叠，
+    // 无论海报图片底部是什么颜色，都被完全盖住，交界线从物理上被消除。
+    val headerScrim = remember(animatedTop, animatedBottom) {
+        val seamColor = lerp(animatedTop, animatedBottom, 0.08f)
         Brush.verticalGradient(
             0f to Color.Black.copy(alpha = 0.42f),
-            0.30f to Color.Transparent,
-            0.50f to animatedTop.copy(alpha = 0.10f),
-            0.66f to animatedTop.copy(alpha = 0.34f),
-            0.82f to animatedTop.copy(alpha = 0.68f),
-            0.93f to animatedTop.copy(alpha = 0.90f),
-            1f to animatedTop
+            0.26f to Color.Transparent,
+            0.38f to seamColor.copy(alpha = 0.06f),
+            0.50f to seamColor.copy(alpha = 0.18f),
+            0.60f to seamColor.copy(alpha = 0.38f),
+            0.70f to seamColor.copy(alpha = 0.68f),
+            0.78f to seamColor,              // 此处起完全不透明，海报底部 22% 为纯色
+            1f to seamColor
         )
     }
 

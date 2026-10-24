@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -345,14 +346,16 @@ fun TvDetailScreen(
             )
         }
 
+        val screenH = LocalConfiguration.current.screenHeightDp.dp
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 60.dp)
         ) {
-            // 顶部留白：让 Logo 压在背景图上，而不是顶到屏幕边
+            // 顶部占位：把 L0（标题/评分/按钮）推到屏幕 45% 处，
+            // 落在 headerScrim 主色已较浓的区域，不挡海报主体、沉浸感更强
             item {
-                Spacer(Modifier.height(72.dp))
+                Spacer(Modifier.height(screenH * 0.45f))
             }
 
             // ---------- 标题区：艺术字 Logo 优先，文字标题兜底 ----------
@@ -374,7 +377,7 @@ fun TvDetailScreen(
                         // 以前有刮削时是一张很大的艺术字图、没有刮削时是两行大字，
                         // 两种片子的首屏高度和重心完全不同。现在统一成：起始高度一致、
                         // Logo 高度封顶，刮削成功与否页面骨架都长得一样。
-                        val titleSlotHeight = 52.dp
+                        val titleSlotHeight = 48.dp
                         var logoFailed by remember(logo) { mutableStateOf(false) }
                         Box(
                             Modifier
@@ -415,7 +418,7 @@ fun TvDetailScreen(
                             item.rating > 0.0 -> item.rating
                             else -> 0.0
                         }
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(8.dp))
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -453,7 +456,7 @@ fun TvDetailScreen(
 
                         // 操作按钮行：播放 + 从头开始（看过后才出现） + 收藏（圆形图标）
                         // 按钮整体收小一档、收藏改用图标，视觉重心让回给海报。
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(10.dp))
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -551,7 +554,7 @@ fun TvDetailScreen(
 
                         // 层级提示：告诉用户还剩下几层，避免「信息被藏起来但不知道」的情况
                         if (level < 3) {
-                            Spacer(Modifier.height(24.dp))
+                            Spacer(Modifier.height(14.dp))
                             Text(
                                 if (level == 0) "▼ 按下键查看剧情、评分与剧集"
                                 else if (level == 1) "▼ 按下键查看剧集　　▲ 按上键收起"

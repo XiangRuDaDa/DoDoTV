@@ -115,13 +115,37 @@ fun TvHomeScreen(
         else (listState.firstVisibleItemScrollOffset.toFloat() / heroCollapseDistPx).coerceIn(0f, 1f)
     val topBarAlpha by animateFloatAsState(targetValue = 1f - rawFade, label = "tv_topbar_fade")
 
-    // 焦点 requester 链：TvTopBar ↔ TvHero 播放按钮 ↔ 第一个 TvPosterRow
-    val topBarFirstFocus = remember { FocusRequester() }
+    // 焦点 requester 链：同步按钮 ↔ TvHero 播放按钮
+    // 统一在最外层 Box 拦截方向键，避免被 LazyColumn 内部的焦点导航先消费掉
+    val syncButtonFocus = remember { FocusRequester() }
     val heroPlayFocus = remember { FocusRequester() }
+    // 用状态跟踪当前焦点层级（Hero = true，TopBar = false）
+    var heroFocused by remember { mutableStateOf(false) }
+    var syncFocused by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { runCatching { heroPlayFocus.requestFocus() } }
 
-    Box(Modifier.fillMaxSize().background(AppColors.Bg)) {
+    // 最外层统一焦点导航：根据当前焦点所在层级拦截 DPad Up/Down
+    // 必须在最外层做，否则 LazyColumn 内部的焦点导航会先消费掉方向键
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(AppColors.Bg)
+            .onPreviewKeyEvent { event ->
+                if (event.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                val keyCode = event.nativeKeyEvent.keyCode
+                // 焦点在 Hero 播放按钮上时按↑ → 跳到顶部同步按钮
+                if (keyCode == KeyEvent.KEYCODE_DPAD_UP && heroFocused) {
+                    syncButtonFocus.requestFocus()
+                    true
+                }
+                // 焦点在顶部同步按钮上时按↓ → 跳到 Hero 播放按钮
+                else if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN && syncFocused) {
+                    heroPlayFocus.requestFocus()
+                    true
+                } else false
+            }
+    ) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
@@ -135,7 +159,7 @@ fun TvHomeScreen(
                         playFocusRequester = heroPlayFocus,
                         onPlay = { onPlay(hero) },
                         onDetail = { onDetail(hero.id) },
-                        onDpadUpToTopBar = { topBarFirstFocus.requestFocus() }
+                        onPlayFocusChanged = { heroFocused = it }
                     )
                 }
             } else if (library.isEmpty()) {
@@ -161,12 +185,12 @@ fun TvHomeScreen(
         TvTopBar(
             alpha = topBarAlpha,
             scanning = vm.scanning,
-            firstFocusRequester = topBarFirstFocus,
+            syncFocusRequester = syncButtonFocus,
+            onSyncFocusChanged = { syncFocused = it },
             onSearch = onSearch,
             onSources = onSources,
             onSettings = onSettings,
-            onRefresh = { vm.scanAll() },
-            onDpadDownToHero = { heroPlayFocus.requestFocus() }
+            onRefresh = { vm.scanAll() }
         )
     }
 }
@@ -175,28 +199,18 @@ fun TvHomeScreen(
 @Composable
 private fun TvTopBar(
     alpha: Float,
-    firstFocusRequester: FocusRequester,
+    syncFocusRequester: FocusRequester,
+    onSyncFocusChanged: (Boolean) -> Unit,
     onSearch: () -> Unit,
     onSources: () -> Unit,
     onSettings: () -> Unit,
     onRefresh: () -> Unit,
-    scanning: Boolean = false,
-    onDpadDownToHero: () -> Unit
+    scanning: Boolean = false
 ) {
-    val enabled = alpha > 0.1f
-
     Row(
         Modifier
-            .focusable(enabled = enabled)
             .fillMaxWidth()
             .graphicsLayer { this.alpha = alpha }
-            .onPreviewKeyEvent { event ->
-                if (enabled && event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
-                    (event.nativeKeyEvent?.keyCode ?: 0) == KeyEvent.KEYCODE_DPAD_DOWN) {
-                    onDpadDownToHero()
-                    true
-                } else false
-            }
             .padding(start = 20.dp, end = 20.dp, top = 18.dp),
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically
@@ -205,13 +219,15 @@ private fun TvTopBar(
             CircularProgressIndicator(color = AppColors.Brand, strokeWidth = 2.dp)
             Spacer(Modifier.width(18.dp))
         } else {
-            TvPillButton("同步", primary = false, onClick = onRefresh)
+            TvPillButton(
+                "同步", primary = false, onClick = onRefresh,
+                modifier = Modifier
+                    .focusRequester(syncFocusRequester)
+                    .onFocusChanged { onSyncFocusChanged(it.isFocused) }
+            )
             Spacer(Modifier.width(12.dp))
         }
-        TvPillButton(
-            "搜索", primary = false, onClick = onSearch,
-            modifier = Modifier.focusRequester(firstFocusRequester)
-        )
+        TvPillButton("搜索", primary = false, onClick = onSearch)
         Spacer(Modifier.width(12.dp))
         TvPillButton("来源", primary = false, onClick = onSources)
         Spacer(Modifier.width(12.dp))
@@ -226,19 +242,12 @@ private fun TvHero(
     playFocusRequester: FocusRequester,
     onPlay: () -> Unit,
     onDetail: () -> Unit,
-    onDpadUpToTopBar: () -> Unit
+    onPlayFocusChanged: (Boolean) -> Unit
 ) {
     Box(
         Modifier
             .fillMaxWidth()
             .height(430.dp)
-            .onPreviewKeyEvent { event ->
-                if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
-                    (event.nativeKeyEvent?.keyCode ?: 0) == KeyEvent.KEYCODE_DPAD_UP) {
-                    onDpadUpToTopBar()
-                    true
-                } else false
-            }
     ) {
         AsyncImage(
             model = item.backdropUrl.ifBlank { item.posterUrl },
@@ -298,23 +307,13 @@ private fun TvHero(
             Box(Modifier.fillMaxWidth(0.62f)) {
                 TvMetaRow(item, modifier = Modifier.align(Alignment.Center))
             }
-            if (item.overview.isNotBlank()) {
-                Spacer(Modifier.height(14.dp))
-                Text(
-                    item.overview,
-                    color = Color.White.copy(alpha = 0.82f),
-                    style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(0.7f)
-                )
-            }
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 TvPillButton(
                     text = if (item.positionMs > 5_000L) "继续播放" else "立即播放",
-                    modifier = Modifier.focusRequester(playFocusRequester),
+                    modifier = Modifier
+                        .focusRequester(playFocusRequester)
+                        .onFocusChanged { onPlayFocusChanged(it.isFocused) },
                     primary = true,
                     onClick = onPlay
                 )
